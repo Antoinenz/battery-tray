@@ -581,6 +581,19 @@ fn apply_action(app: &mut App, action: Action) {
             }
             return;
         }
+        Action::OpenProjectPage => {
+            unsafe {
+                ShellExecuteW(
+                    std::ptr::null_mut(),
+                    wide("open").as_ptr(),
+                    wide(settings_ui::PROJECT_URL).as_ptr(),
+                    std::ptr::null(),
+                    std::ptr::null(),
+                    SW_SHOWNORMAL as i32,
+                );
+            }
+            return;
+        }
         Action::ResetLearned => {
             // Learned data only: preferences are not a belief about the
             // battery and should survive.

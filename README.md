@@ -1,8 +1,11 @@
-# Battery Time Remaining
+# BatteryTray
 
 A lightweight Windows tray app that predicts battery time to empty, to 80% while
 charging, and to full — and shows the watts actually entering or leaving the
 battery.
+
+Runs as `battery-tray.exe`; settings and learned data live in
+`%LOCALAPPDATA%\BatteryTray`.
 
 ```
  ┌─────────────────────────────┐
@@ -46,6 +49,7 @@ A plain tabbed window built from standard Windows controls.
 | Alerts | Low and critical warnings with their levels, plus optional 80% and fully-charged notifications |
 | Battery | Full-charge vs design capacity, health, charge cycles, chemistry |
 | Learning | What the model has learned, and Reset learned data |
+| About | Version, what the app runs as, where its data lives, and a link to the project |
 
 A pinned panel stays put until dismissed and can be dragged anywhere on the
 screen; it reopens where it was left. An unpinned one is anchored to the tray

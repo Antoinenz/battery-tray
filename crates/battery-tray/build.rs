@@ -36,6 +36,44 @@ fn rc_literal(p: &Path) -> String {
     p.display().to_string().replace('\\', "\\\\")
 }
 
+/// A `VERSIONINFO` block, which is what Explorer's Details tab and Task
+/// Manager read to name a process. Without one the app shows as a bare
+/// filename with nothing beside it.
+fn version_info() -> String {
+    let v = env!("CARGO_PKG_VERSION");
+    // The version as the four comma-separated fields the resource wants.
+    let mut parts: Vec<&str> = v.split('.').collect();
+    parts.resize(4, "0");
+    let quad = parts.join(",");
+    format!(
+        r#"1 VERSIONINFO
+FILEVERSION {quad}
+PRODUCTVERSION {quad}
+FILEOS 0x4L
+FILETYPE 0x1L
+BEGIN
+  BLOCK "StringFileInfo"
+  BEGIN
+    BLOCK "040904B0"
+    BEGIN
+      VALUE "CompanyName", "Antoinenz"
+      VALUE "FileDescription", "BatteryTray - battery time remaining"
+      VALUE "FileVersion", "{v}"
+      VALUE "InternalName", "battery-tray"
+      VALUE "OriginalFilename", "battery-tray.exe"
+      VALUE "ProductName", "BatteryTray"
+      VALUE "ProductVersion", "{v}"
+    END
+  END
+  BLOCK "VarFileInfo"
+  BEGIN
+    VALUE "Translation", 0x409, 1200
+  END
+END
+"#
+    )
+}
+
 fn main() {
     println!("cargo:rerun-if-changed=build.rs");
     println!("cargo:rerun-if-changed=../battery-core/src/glyph.rs");
@@ -67,11 +105,12 @@ fn main() {
     }
 
     // Resource ids: 1 = the application icon; id 1 of type 24 (RT_MANIFEST) =
-    // the process manifest.
+    // the process manifest; then the version block.
     let rc = format!(
-        "1 ICON \"{}\"\n1 24 \"{}\"\n",
+        "1 ICON \"{}\"\n1 24 \"{}\"\n{}",
         rc_literal(&ico_path),
-        rc_literal(&manifest_path)
+        rc_literal(&manifest_path),
+        version_info()
     );
     let rc_path = out.join("app.rc");
     if let Err(e) = std::fs::write(&rc_path, rc) {

@@ -39,8 +39,14 @@ pub const ID_CBO_CRITICAL: u16 = 161;
 pub const ID_CHK_SHOW_GRAPH: u16 = 170;
 pub const ID_CHK_ZERO_LINE: u16 = 171;
 pub const ID_CHK_AUTOFIT: u16 = 172;
+pub const ID_BTN_GITHUB: u16 = 180;
 
-const TABS: [&str; 5] = ["General", "Display", "Alerts", "Battery", "Learning"];
+const TABS: [&str; 6] = ["General", "Display", "Alerts", "Battery", "Learning", "About"];
+
+/// The name the app goes by, its version, and where it lives.
+pub const APP_NAME: &str = "BatteryTray";
+pub const APP_VERSION: &str = env!("CARGO_PKG_VERSION");
+pub const PROJECT_URL: &str = "https://github.com/Antoinenz/battery-tray";
 
 /// Battery facts shown in the Battery tab, already converted for display.
 #[derive(Clone, Debug, Default)]
@@ -76,6 +82,7 @@ pub enum Action {
     ToggleZeroLine,
     ToggleAutofit,
     ResetLearned,
+    OpenProjectPage,
 }
 
 fn wide(s: &str) -> Vec<u16> {
@@ -147,7 +154,10 @@ pub struct SettingsWindow {
     pub hwnd: HWND,
     tab: HWND,
     font: HFONT,
-    pages: [Vec<HWND>; 5],
+    /// A heavier face for the About page's heading. Kept alongside `font` so
+    /// both are destroyed together.
+    title_font: HFONT,
+    pages: [Vec<HWND>; 6],
     chk_startup: HWND,
     chk_decimals: HWND,
     chk_pin: HWND,
@@ -208,6 +218,12 @@ impl Builder {
     fn label(&self, text: &str, x: i32, y: i32, w: i32) -> HWND {
         self.make("STATIC", text, SS_LEFT, x, y, w, 18, 0)
     }
+    /// A label in a different face, for the About heading.
+    fn label_in(&self, text: &str, x: i32, y: i32, w: i32, h: i32, font: HFONT) -> HWND {
+        let hwnd = self.make("STATIC", text, SS_LEFT, x, y, w, h, 0);
+        unsafe { SendMessageW(hwnd, WM_SETFONT, font as usize, 1) };
+        hwnd
+    }
     fn value(&self, x: i32, y: i32, w: i32) -> HWND {
         self.make("STATIC", "", SS_RIGHT, x, y, w, 18, 0)
     }
@@ -258,6 +274,12 @@ const BATTERY_ROWS: [&str; 5] = [
     "Charge cycles",
     "Chemistry",
 ];
+/// Worth having to hand when something has gone wrong: what the app runs as,
+/// and where it keeps its state.
+const ABOUT_ROWS: [(&str, &str); 2] = [
+    ("Runs as", "battery-tray.exe"),
+    ("Settings and data", "%LOCALAPPDATA%\\BatteryTray"),
+];
 const LEARNING_ROWS: [&str; 6] = [
     "Seeded from Windows history",
     "Charge curve learned",
@@ -283,6 +305,21 @@ impl SettingsWindow {
             CreateFontW(
                 -((9.0 * scale * 96.0 / 72.0).round() as i32),
                 0, 0, 0, FW_NORMAL as i32, 0, 0, 0,
+                DEFAULT_CHARSET as u32,
+                OUT_DEFAULT_PRECIS as u32,
+                CLIP_DEFAULT_PRECIS as u32,
+                CLEARTYPE_QUALITY as u32,
+                (DEFAULT_PITCH | FF_DONTCARE) as u32,
+                wide("Segoe UI").as_ptr(),
+            )
+        };
+
+        // The About heading, in the same face a step larger and semibold --
+        // which is how Windows' own About pages set a product name.
+        let title_font = unsafe {
+            CreateFontW(
+                -((15.0 * scale * 96.0 / 72.0).round() as i32),
+                0, 0, 0, FW_SEMIBOLD as i32, 0, 0, 0,
                 DEFAULT_CHARSET as u32,
                 OUT_DEFAULT_PRECIS as u32,
                 CLIP_DEFAULT_PRECIS as u32,
@@ -435,11 +472,36 @@ impl SettingsWindow {
         learning.push(b.label("Clears learned data and re-reads Windows history.", cx, reset_y, wide_w));
         learning.push(b.button("Reset learned data", cx, reset_y + 22, 160, 30, ID_BTN_RESET));
 
+        // --- About
+        let mut about = vec![
+            b.label_in(APP_NAME, cx, cy - 6, wide_w, 28, title_font),
+            b.label(&format!("Version {APP_VERSION}"), cx, cy + 24, wide_w),
+            b.label(
+                "Predicts how long the battery has left by",
+                cx, cy + 58, wide_w,
+            ),
+            b.label(
+                "learning how this machine actually behaves.",
+                cx, cy + 76, wide_w,
+            ),
+        ];
+        for (i, (name, value)) in ABOUT_ROWS.iter().enumerate() {
+            let y = cy + 112 + i as i32 * 24;
+            about.push(b.label(name, cx, y, 108));
+            about.push(b.label(value, cx + 112, y, wide_w - 112));
+        }
+        about.push(b.button(
+            "View on GitHub",
+            cx, cy + 112 + ABOUT_ROWS.len() as i32 * 24 + 20,
+            150, 30, ID_BTN_GITHUB,
+        ));
+
         let mut w = SettingsWindow {
             hwnd,
             tab,
             font,
-            pages: [general, display, alerts, battery, learning],
+            title_font,
+            pages: [general, display, alerts, battery, learning, about],
             chk_startup,
             chk_decimals,
             chk_pin,
@@ -494,6 +556,7 @@ impl SettingsWindow {
             ID_CHK_ZERO_LINE => Some(Action::ToggleZeroLine),
             ID_CHK_AUTOFIT => Some(Action::ToggleAutofit),
             ID_BTN_RESET => Some(Action::ResetLearned),
+            ID_BTN_GITHUB => Some(Action::OpenProjectPage),
             _ => {
                 if (ID_TRAY_BASE..ID_TRAY_BASE + TrayMode::ALL.len() as u16).contains(&id) {
                     Some(Action::SetTray(TrayMode::ALL[(id - ID_TRAY_BASE) as usize]))
@@ -619,6 +682,7 @@ impl Drop for SettingsWindow {
     fn drop(&mut self) {
         unsafe {
             DeleteObject(self.font as HGDIOBJ);
+            DeleteObject(self.title_font as HGDIOBJ);
         }
     }
 }
