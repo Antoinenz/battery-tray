@@ -43,10 +43,23 @@ pub const ID_BTN_GITHUB: u16 = 180;
 
 const TABS: [&str; 6] = ["General", "Display", "Alerts", "Battery", "Learning", "About"];
 
-/// The name the app goes by, its version, and where it lives.
+/// The name the app goes by, and where it lives.
 pub const APP_NAME: &str = "BatteryTray";
-pub const APP_VERSION: &str = env!("CARGO_PKG_VERSION");
 pub const PROJECT_URL: &str = "https://github.com/Antoinenz/battery-tray";
+
+/// Set by `build.rs`: the release tag for a build made from one, otherwise the
+/// crate version and the commit it came from.
+pub const APP_VERSION: &str = env!("BUILD_VERSION");
+/// Either `release` or `dev`. See `build.rs`.
+pub const BUILD_CHANNEL: &str = env!("BUILD_CHANNEL");
+
+/// What the About page calls this build.
+fn build_label() -> &'static str {
+    match BUILD_CHANNEL {
+        "release" => "Release",
+        _ => "Development",
+    }
+}
 
 /// Battery facts shown in the Battery tab, already converted for display.
 #[derive(Clone, Debug, Default)]
@@ -275,11 +288,15 @@ const BATTERY_ROWS: [&str; 5] = [
     "Chemistry",
 ];
 /// Worth having to hand when something has gone wrong: what the app runs as,
-/// and where it keeps its state.
-const ABOUT_ROWS: [(&str, &str); 2] = [
-    ("Runs as", "battery-tray.exe"),
-    ("Settings and data", "%LOCALAPPDATA%\\BatteryTray"),
-];
+/// where it keeps its state, and which kind of build it is.
+fn about_rows() -> [(&'static str, &'static str); 4] {
+    [
+        ("Runs as", "battery-tray.exe"),
+        ("Settings and data", "%LOCALAPPDATA%\\BatteryTray"),
+        ("Build", build_label()),
+        ("Licence", "MIT"),
+    ]
+}
 const LEARNING_ROWS: [&str; 6] = [
     "Seeded from Windows history",
     "Charge curve learned",
@@ -485,14 +502,15 @@ impl SettingsWindow {
                 cx, cy + 76, wide_w,
             ),
         ];
-        for (i, (name, value)) in ABOUT_ROWS.iter().enumerate() {
+        let rows = about_rows();
+        for (i, (name, value)) in rows.iter().enumerate() {
             let y = cy + 112 + i as i32 * 24;
             about.push(b.label(name, cx, y, 108));
             about.push(b.label(value, cx + 112, y, wide_w - 112));
         }
         about.push(b.button(
             "View on GitHub",
-            cx, cy + 112 + ABOUT_ROWS.len() as i32 * 24 + 20,
+            cx, cy + 112 + rows.len() as i32 * 24 + 20,
             150, 30, ID_BTN_GITHUB,
         ));
 

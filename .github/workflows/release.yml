@@ -1,0 +1,68 @@
+name: Release
+
+# Tagging is the release. Pushing v1.2.3 builds that commit, names the binary
+# after the tag, and publishes it.
+on:
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: windows-latest
+    env:
+      # What build.rs reads to make this a release build rather than a dev one.
+      # Set for the whole job so the tests and the shipped binary are built
+      # from an identical configuration.
+      BATTERY_TRAY_RELEASE: ${{ github.ref_name }}
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install the Rust toolchain
+        run: |
+          rustup toolchain install stable --profile minimal --no-self-update
+          rustup default stable
+          cargo --version
+
+      - name: Test
+        run: cargo test --workspace --release
+
+      - name: Build
+        run: cargo build --release
+
+      # build.rs cannot fail the build when the SDK resource compiler is
+      # missing -- the app still runs, it just loses its icon and version
+      # block. That would ship a nameless binary silently, so check the tag
+      # actually made it into the executable before publishing anything.
+      - name: Verify the binary carries the tag
+        shell: pwsh
+        run: |
+          $exe = "target/release/battery-tray.exe"
+          $info = (Get-Item $exe).VersionInfo
+          "FileVersion:  $($info.FileVersion)"
+          "ProductName:  $($info.ProductName)"
+          if ($info.FileVersion -ne "${{ github.ref_name }}") {
+            throw "expected version '${{ github.ref_name }}', got '$($info.FileVersion)' -- resources were probably not embedded"
+          }
+
+      - name: Checksum
+        shell: pwsh
+        run: |
+          $h = (Get-FileHash target/release/battery-tray.exe -Algorithm SHA256).Hash.ToLower()
+          "$h  battery-tray.exe" | Out-File -Encoding ascii target/release/battery-tray.exe.sha256
+          Get-Content target/release/battery-tray.exe.sha256
+
+      - name: Publish
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release create "${{ github.ref_name }}" `
+            target/release/battery-tray.exe `
+            target/release/battery-tray.exe.sha256 `
+            --title "BatteryTray ${{ github.ref_name }}" `
+            --generate-notes

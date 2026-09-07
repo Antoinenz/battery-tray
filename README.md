@@ -21,6 +21,10 @@ Runs as `battery-tray.exe`; settings and learned data live in
 
 ## Running it
 
+Download `battery-tray.exe` from the
+[latest release](https://github.com/Antoinenz/battery-tray/releases/latest) and
+run it; there is nothing to install. Or build it:
+
 ```sh
 cargo build --release
 ./target/release/battery-tray.exe
@@ -49,7 +53,7 @@ A plain tabbed window built from standard Windows controls.
 | Alerts | Low and critical warnings with their levels, plus optional 80% and fully-charged notifications |
 | Battery | Full-charge vs design capacity, health, charge cycles, chemistry |
 | Learning | What the model has learned, and Reset learned data |
-| About | Version, what the app runs as, where its data lives, and a link to the project |
+| About | Version and build kind, what the app runs as, where its data lives, licence, and a link to the project |
 
 A pinned panel stays put until dismissed and can be dragged anywhere on the
 screen; it reopens where it was left. An unpinned one is anchored to the tray
@@ -81,6 +85,29 @@ Percentages in the *tray* stay whole even with decimals enabled. Legibility at
 20 px is set by how many glyphs must fit, so time is stacked as two lines —
 hours over minutes, like a clock — rather than squeezed into `2:45`, and the
 finer percentage reading lives in the panel where there is room for it.
+
+## Releases
+
+There are two kinds of build, and the About tab says which one you have.
+
+A **release** build is made from a tag by
+[the workflow](.github/workflows/release.yml) and names itself after that tag,
+so `v1.2.0` shows as `v1.2.0`. A **development** build is anything else -- a
+local `cargo build` -- and names itself after the commit it came from, as in
+`0.1.0-dev (bf7cff7)`. That way a binary someone sends you can be traced back
+to the source it was built from, which a bare crate version shared by every
+local build cannot do.
+
+Cutting a release is pushing a tag:
+
+```sh
+git tag v1.2.0 && git push origin v1.2.0
+```
+
+The workflow runs the tests, builds, checks that the tag actually reached the
+executable's version resource -- resource embedding fails silently, and a
+nameless binary is not worth shipping -- and publishes the exe with its
+SHA-256.
 
 ## How it predicts
 
@@ -223,3 +250,7 @@ State lives in `%LOCALAPPDATA%\BatteryTray\`:
   Windows reports only a fault inside whichever system DLL made the call.
 
 "Reset learned data" clears the model and re-seeds; it leaves settings alone.
+
+## Licence
+
+MIT. See [LICENSE](LICENSE).
