@@ -359,18 +359,35 @@ fn draw_chart(
     let base_y = to_y(base_value);
     let level = level_colour(est, p);
 
-    if kind == GraphKind::Throughput && zero_line && !collapsed {
-        for x in r.left..r.right {
-            let f = ((x - r.left) as f64 / fade_w.max(1) as f64).clamp(0.0, 1.0);
-            cv.blend(x, base_y.round() as i32, p.rule, 0.9 * f);
+    // The fade belongs to the left end of the *line*, not the left edge of the
+    // plot. Anchoring it to the plot would leave a short history with no fade
+    // at all, since by the time the data began the ramp would already be over.
+    let first_col = vals.iter().position(|v| v.is_some()).unwrap_or(0) as i32;
+    let fade_from = r.left + first_col;
+    let fade_at = |x: i32| ((x - fade_from) as f64 / fade_w.max(1) as f64).clamp(0.0, 1.0);
+
+    let zero_visible = kind == GraphKind::Throughput && zero_line && !collapsed;
+    if zero_visible {
+        for x in fade_from..r.right {
+            cv.blend(x, base_y.round() as i32, p.rule, 0.9 * fade_at(x));
         }
     }
+
+    // How the area under the curve falls away. With a zero line to land on, the
+    // wash stays tight to the curve and keeps a floor so it reads as filled all
+    // the way down. Without one there is nothing to land on, so it reaches much
+    // further and dissolves to nothing instead of stopping at a hard edge.
+    let (peak_a, floor_a, falloff) = if zero_visible {
+        (0.30, 0.05, 1.5)
+    } else {
+        (0.34, 0.0, 0.55)
+    };
 
     for (i, v) in vals.iter().enumerate() {
         let Some(v) = *v else { continue };
         let x = r.left + i as i32;
-        // Older data dissolves toward the left edge instead of being cut off.
-        let fade = ((x - r.left) as f64 / fade_w.max(1) as f64).clamp(0.0, 1.0);
+        // Older data dissolves at the start of the line instead of being cut off.
+        let fade = fade_at(x);
         if fade <= 0.0 {
             continue;
         }
@@ -392,7 +409,9 @@ fn draw_chart(
         let span = (bot - top).max(1.0);
         for py in top.ceil() as i32..bot.floor() as i32 {
             let t = ((py as f64 - top) / span).clamp(0.0, 1.0);
-            let a = if y < base_y { 0.24 * (1.0 - t) + 0.06 } else { 0.06 + 0.24 * t };
+            // Distance from the curve, 0 at the line and 1 at the far end.
+            let d = if y < base_y { t } else { 1.0 - t };
+            let a = floor_a + peak_a * (1.0 - d).powf(falloff);
             cv.blend(x, py, col, a * fade);
         }
         for d in -2..=2 {

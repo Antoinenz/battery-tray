@@ -11,6 +11,7 @@ mod settings_ui;
 
 use battery_core::estimator::{Estimator, HistPoint};
 use battery_core::alerts::{Alert, Alerts};
+use battery_core::display::SocDisplay;
 use battery_core::settings::Settings;
 use battery_core::types::{fmt_duration, Estimates, Phase, Sample, SocTrack};
 use battery_core::{seed, store};
@@ -50,7 +51,7 @@ const SAVE_INTERVAL_S: u64 = 300;
 
 /// The graph advances about a pixel every ten seconds, so this is ample to make
 /// its motion look continuous while costing almost nothing.
-const PANEL_REFRESH_MS: u32 = 500;
+const PANEL_REFRESH_MS: u32 = 250;
 /// Hover must be deliberate before a tooltip appears.
 const TOOLTIP_DELAY_MS: u32 = 900;
 
@@ -150,9 +151,8 @@ struct App {
     /// the panel keeps the system's anti-aliased rounded corners; a region on
     /// the panel itself would replace them with hard edges.
     tail: HWND,
-    /// Last charge level shown, so the readout only ever moves the way the
-    /// battery is actually going.
-    shown_soc: Option<f64>,
+    /// Paces the charge readout so it advances evenly.
+    soc_display: SocDisplay,
 
     display_on: Arc<AtomicBool>,
     sample_interval: Arc<AtomicU32>,
@@ -169,23 +169,6 @@ fn app_from(hwnd: HWND) -> Option<&'static mut App> {
         let p = GetWindowLongPtrW(hwnd, GWLP_USERDATA) as *mut App;
         p.as_mut()
     }
-}
-
-/// The charge level to print: interpolated between gauge steps, and held
-/// monotonic in the direction the battery is actually going.
-///
-/// Dead reckoning can run slightly ahead or behind the next real reading.
-/// Letting the number tick backwards while discharging would look like a
-/// fault, so it is only ever allowed to move the way the power is flowing.
-fn displayed_soc(app: &mut App, track: &SocTrack, now_ms: i64) -> f64 {
-    let raw = track.at(now_ms);
-    let shown = match app.shown_soc {
-        Some(prev) if track.per_ms < 0.0 => raw.min(prev),
-        Some(prev) if track.per_ms > 0.0 => raw.max(prev),
-        _ => raw,
-    };
-    app.shown_soc = Some(shown);
-    shown
 }
 
 fn dpi_scale(hwnd: HWND) -> f64 {
@@ -786,7 +769,7 @@ unsafe extern "system" fn panel_proc(hwnd: HWND, msg: u32, wp: WPARAM, lp: LPARA
                 });
                 let hist: Vec<HistPoint> = app.est.history().iter().copied().collect();
                 let now = battery_win::now_ms();
-                let soc_display = displayed_soc(app, &est.soc_track, now);
+                let soc_display = app.soc_display.update(&est.soc_track, now);
                 panel::render(
                     hdc,
                     rc.right,
@@ -1032,9 +1015,9 @@ fn drain_messages(app: &mut App) {
         }
     }
     let Some(est) = latest else { return };
-    // A change of direction invalidates the one-way rule.
+    // A change of direction invalidates both the pacing and the one-way rule.
     if app.last.as_ref().map(|p| p.phase) != Some(est.phase) {
-        app.shown_soc = None;
+        app.soc_display.reset();
     }
     update_tray(app, &est);
     if let Some(alert) = app.alerts.evaluate(&est, &app.settings) {
@@ -1233,7 +1216,7 @@ fn main() {
             dragged: false,
             alerts: Alerts::default(),
             tail: tail_hwnd,
-            shown_soc: None,
+            soc_display: SocDisplay::default(),
             display_on: display_on.clone(),
             sample_interval: sample_interval.clone(),
             rx,

@@ -6,6 +6,7 @@
 
 pub mod alerts;
 pub mod curve;
+pub mod display;
 pub mod estimator;
 pub mod glyph;
 pub mod filter;
@@ -18,5 +19,6 @@ pub mod types;
 pub use estimator::{Estimator, HistPoint};
 pub use model::{Kind, Model};
 pub use alerts::{Alert, Alerts};
+pub use display::SocDisplay;
 pub use settings::{GraphKind, PanelTheme, Settings, TrayMode};
 pub use types::{fmt_duration, Estimates, Phase, Prediction, Sample};

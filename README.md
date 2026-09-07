@@ -60,12 +60,18 @@ is a chart — but settings are a form, and real `BUTTON`, `STATIC` and
 high-contrast modes and screen-reader support for free.
 
 The charge gauge only reports whole 10 mWh steps — about 0.026% on this pack —
-so a two-decimal readout taken straight from it lurches. The panel dead-reckons
-between steps from the measured power flow, which is precisely the quantity
-that says how fast the true value is moving, and never drifts more than one
-step from the last real reading. The result is held monotonic in the direction
-the battery is actually going, so it cannot tick backwards while draining.
-Measured on a charging pack: 87.61% → 87.65% → 87.71% over nine seconds.
+so a two-decimal readout taken straight from it lurches. The panel carries its
+own value instead, moving it at a velocity that itself eases toward the measured
+one, so the counter accelerates and decelerates with load rather than switching
+between speeds. That value is pulled gently back toward the reading, which keeps
+it honest without the correction ever showing as a jump, is bounded to within
+one and a half gauge steps of it, and is never allowed to move against the
+direction the battery is going.
+
+Dead reckoning alone was not enough: the rate it integrates comes from a filter
+that steps whenever a sample lands, so the figure changed pace visibly, and it
+stalled whenever drift hit the step bound. `SocDisplay` is tested against a
+simulated quantising gauge and holds every increment within 15% of the mean.
 
 Percentages in the *tray* stay whole even with decimals enabled. Legibility at
 20 px is set by how many glyphs must fit, so time is stacked as two lines —
@@ -167,6 +173,14 @@ zero line is dropped, rather than holding half the height empty for a sign that
 never appears. Both that and the zero line can be turned off, as can the graph
 itself.
 
+The wash under the curve fades with distance from it. With a zero line to land
+on it stays tight and keeps a floor, so the area reads as filled all the way
+down; without one there is nothing to land on, so it reaches much further and
+dissolves rather than stopping at an edge. The left-hand fade is anchored to
+the start of the line rather than the edge of the plot — anchored to the plot,
+a short history would get no fade at all, because the ramp would be over before
+the data began.
+
 It draws only the span it actually has samples for. Holding the earliest reading
 across the rest of the window would render hours the app was not running as a
 flat line, which reads as real history rather than the absence of it. When there
@@ -177,7 +191,7 @@ instead of showing an empty band.
 
 ```
 crates/battery-core   pure Rust: filters, curve, priors, estimator, scoring,
-                      persistence, report seeding, alerts, glyphs. No Win32, 102 tests.
+                      persistence, report seeding, alerts, pacing, glyphs. No Win32, 108 tests.
 crates/battery-win    battery IOCTLs, CPU load
 crates/battery-tray   tray icon, popup panel, settings window, message loop
 ```
@@ -185,7 +199,7 @@ crates/battery-tray   tray icon, popup panel, settings window, message loop
 ## Cost
 
 Measured while running: **~2.5 MB private working set**, ~0.05 s CPU per minute,
-a 530 KB executable, no runtime dependency. Sampling blocks in the kernel via
+a 531 KB executable, no runtime dependency. Sampling blocks in the kernel via
 `BATTERY_WAIT_STATUS` and wakes on real change or a 5-second timeout, with a
 fallback to timed polling if a driver ignores the wait. Tray icons are cached by
 appearance, so a sample that does not change the displayed value draws nothing.
