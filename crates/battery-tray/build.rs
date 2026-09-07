@@ -43,7 +43,7 @@ fn main() {
     let out = PathBuf::from(std::env::var("OUT_DIR").expect("OUT_DIR"));
     let images: Vec<(i32, Vec<u8>)> = SIZES
         .iter()
-        .map(|&s| (s, battery_core::glyph::logo_tile_rgba(s)))
+        .map(|&s| (s, battery_core::glyph::app_icon_rgba(s)))
         .collect();
     let ico = battery_core::glyph::encode_ico(&images);
 

@@ -286,9 +286,14 @@ fn render(spec: &IconSpec) -> Vec<u8> {
     }
 }
 
-/// A window icon: the full logo on its tile.
+/// A window icon: the bare app mark.
 pub fn window_icon(size: i32) -> HICON {
-    create_hicon(size, &rgba_to_bgra(&glyph::logo_tile_rgba(size)))
+    create_hicon(size, &rgba_to_bgra(&glyph::app_icon_rgba(size)))
+}
+
+/// The settings window's icon: a plain cog, so the window says what it is.
+pub fn settings_icon(size: i32) -> HICON {
+    create_hicon(size, &rgba_to_bgra(&glyph::cog_rgba(size, glyph::COG)))
 }
 
 #[derive(Default)]

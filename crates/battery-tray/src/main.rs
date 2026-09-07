@@ -1181,9 +1181,10 @@ fn main() {
             std::ptr::null(),
         );
 
-        let big = icon::window_icon(32);
-        let small = icon::window_icon(16);
-        for w in [hwnd, settings_hwnd] {
+        for (w, big, small) in [
+            (hwnd, icon::window_icon(32), icon::window_icon(16)),
+            (settings_hwnd, icon::settings_icon(32), icon::settings_icon(16)),
+        ] {
             SendMessageW(w, WM_SETICON, ICON_BIG as usize, big as isize);
             SendMessageW(w, WM_SETICON, ICON_SMALL as usize, small as isize);
         }

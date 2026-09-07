@@ -27,6 +27,12 @@ pub const TEAL: Rgba = Rgba(0x2D, 0xD4, 0xBF, 0xFF);
 pub const AMBER: Rgba = Rgba(0xFB, 0xBF, 0x24, 0xFF);
 pub const RED: Rgba = Rgba(0xF8, 0x71, 0x71, 0xFF);
 pub const BLUE: Rgba = Rgba(0x60, 0xA5, 0xFA, 0xFF);
+/// The app mark's own colour. Deeper than [`GREEN`] so that the icon, which
+/// now stands on whatever the taskbar or title bar happens to be rather than
+/// on a tile of its own, keeps its contrast against white as well as black.
+pub const LOGO: Rgba = Rgba(0x22, 0xC5, 0x5E, 0xFF);
+/// The settings cog. A neutral that reads on either title bar.
+pub const COG: Rgba = Rgba(0x8A, 0x8A, 0x8E, 0xFF);
 pub const FG_ON_DARK: Rgba = Rgba(0xEC, 0xEC, 0xEC, 0xFF);
 pub const FG_ON_LIGHT: Rgba = Rgba(0x1A, 0x1A, 0x1A, 0xFF);
 
@@ -243,20 +249,51 @@ pub fn logo_rgba(size: i32, colour: Rgba) -> Vec<u8> {
     rasterise(size, move |x, y| mark(x, y, colour))
 }
 
-/// Full logo on a rounded gradient tile, for the window and file icon.
-pub fn logo_tile_rgba(size: i32) -> Vec<u8> {
+/// The app icon: the bare mark, no tile behind it.
+///
+/// The mark is enlarged about the centre, because without a tile to sit in it
+/// would otherwise float in a lot of empty space at taskbar sizes.
+pub fn app_icon_rgba(size: i32) -> Vec<u8> {
+    /// How much larger than the tray glyph the icon's mark is drawn.
+    const ZOOM: f64 = 1.12;
     rasterise(size, |x, y| {
-        // The mark is inset within the tile and drawn in white.
-        let inset = 0.14;
-        let span = 1.0 - inset * 2.0;
-        let (mx, my) = ((x - inset) / span, (y - inset) / span);
-        if (0.0..1.0).contains(&mx) && (0.0..1.0).contains(&my) {
-            if let Some(c) = mark(mx, my, Rgba(0xFF, 0xFF, 0xFF, 0xFF)) {
-                return Some(c);
-            }
+        let (mx, my) = (0.5 + (x - 0.5) / ZOOM, 0.5 + (y - 0.5) / ZOOM);
+        mark(mx, my, LOGO)
+    })
+}
+
+/// A settings cog: a ring with teeth around it and a hole through the middle.
+///
+/// Deliberately the generic shape rather than anything of the app's own -- a
+/// title bar icon has one job, which is to say what the window is.
+pub fn cog_rgba(size: i32, colour: Rgba) -> Vec<u8> {
+    const TEETH: f64 = 8.0;
+    const R_HOLE: f64 = 0.135;
+    const R_BODY: f64 = 0.315;
+    const R_TOOTH: f64 = 0.44;
+    /// Share of a tooth's pitch taken by the tooth, at its root and at its tip.
+    /// Narrowing toward the tip gives the taper a real cog has.
+    const DUTY_ROOT: f64 = 0.54;
+    const DUTY_TIP: f64 = 0.34;
+
+    rasterise(size, move |x, y| {
+        let (dx, dy) = (x - 0.5, y - 0.5);
+        let r = (dx * dx + dy * dy).sqrt();
+        if r <= R_HOLE || r > R_TOOTH {
+            return None;
         }
-        if in_round_rect(x, y, 0.02, 0.02, 0.98, 0.98, 0.22) {
-            Some(Rgba::lerp(GREEN, TEAL, y))
+        if r <= R_BODY {
+            return Some(colour);
+        }
+        // Position within the current tooth's pitch, 0 at a tooth's centre and
+        // 0.5 at the middle of the gap. Centring on zero puts a tooth on each
+        // axis, which is what makes the shape read as square-on.
+        let phase = (dy.atan2(dx) / std::f64::consts::TAU * TEETH).rem_euclid(1.0);
+        let from_centre = phase.min(1.0 - phase);
+        let t = (r - R_BODY) / (R_TOOTH - R_BODY);
+        let duty = DUTY_ROOT + (DUTY_TIP - DUTY_ROOT) * t;
+        if from_centre < duty / 2.0 {
+            Some(colour)
         } else {
             None
         }
@@ -386,15 +423,31 @@ mod tests {
     }
 
     #[test]
-    fn the_tile_logo_is_opaque_in_the_middle_and_rounded_at_corners() {
-        let t = logo_tile_rgba(64);
-        assert_eq!(alpha_at(&t, 64, 32, 32), 255, "centre must be solid");
-        assert_eq!(alpha_at(&t, 64, 0, 0), 0, "corner must be rounded away");
+    fn the_app_icon_has_no_tile_behind_it() {
+        let a = app_icon_rgba(64);
+        for (x, y) in [(2, 2), (61, 2), (2, 61), (61, 61), (32, 4), (32, 59)] {
+            assert_eq!(alpha_at(&a, 64, x, y), 0, "({x},{y}) should be clear");
+        }
+        // The mark itself is still there, and larger than the tray glyph.
+        let ink = |b: &[u8]| b.chunks(4).map(|p| p[3] as u32).sum::<u32>();
+        assert!(ink(&a) > ink(&logo_rgba(64, LOGO)), "the icon is zoomed in");
+    }
+
+    #[test]
+    fn the_cog_is_a_ring_with_teeth() {
+        let c = cog_rgba(64, COG);
+        assert_eq!(alpha_at(&c, 64, 32, 32), 0, "the hub is hollow");
+        assert_eq!(alpha_at(&c, 64, 32, 32 - 14), 255, "the ring is solid");
+        // A tooth sits on each axis; the gap between two falls at 22.5 degrees.
+        let tooth = alpha_at(&c, 64, 32, 32 - 25);
+        let gap = alpha_at(&c, 64, 32 + 23, 32 - 10);
+        assert!(tooth > 200, "tooth on the axis, got {tooth}");
+        assert!(gap < 60, "gap between teeth, got {gap}");
     }
 
     #[test]
     fn ico_has_a_valid_header_and_consistent_offsets() {
-        let images = vec![(16, logo_tile_rgba(16)), (32, logo_tile_rgba(32))];
+        let images = vec![(16, app_icon_rgba(16)), (32, app_icon_rgba(32))];
         let ico = encode_ico(&images);
         assert_eq!(&ico[0..2], &[0, 0], "reserved");
         assert_eq!(u16::from_le_bytes([ico[2], ico[3]]), 1, "type icon");
@@ -414,7 +467,7 @@ mod tests {
 
     #[test]
     fn ico_encodes_256_as_zero_in_the_directory() {
-        let ico = encode_ico(&[(256, logo_tile_rgba(256))]);
+        let ico = encode_ico(&[(256, app_icon_rgba(256))]);
         assert_eq!(ico[6], 0, "256 px is recorded as 0");
         assert_eq!(ico[7], 0);
     }
