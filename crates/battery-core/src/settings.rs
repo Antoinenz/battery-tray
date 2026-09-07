@@ -105,13 +105,18 @@ impl Default for Settings {
 
 impl Settings {
     /// Format a charge level for display, honouring the decimals preference.
+    ///
+    /// The endpoints are always shown whole. At a full or empty pack the
+    /// decimals cannot move -- the reading is pinned at the limit -- so
+    /// "100.00%" only implies a precision that is not there.
     pub fn format_soc(&self, soc: f64) -> String {
-        if self.decimals {
-            // The capacity gauge quantises to ~0.03% on this class of battery,
-            // so two places actually resolve movement rather than inventing it.
-            format!("{:.2}%", soc * 100.0)
+        let pct = (soc * 100.0).clamp(0.0, 100.0);
+        if !self.decimals || pct >= 99.995 || pct <= 0.005 {
+            format!("{pct:.0}%")
         } else {
-            format!("{:.0}%", soc * 100.0)
+            // The capacity gauge quantises to ~0.03% on this class of battery,
+            // so two places resolve real movement rather than inventing it.
+            format!("{pct:.2}%")
         }
     }
 }
@@ -135,8 +140,13 @@ mod tests {
         s.decimals = false;
         assert_eq!(s.format_soc(0.912345), "91%");
         s.decimals = true;
-        assert_eq!(s.format_soc(0.0), "0.00%");
-        assert_eq!(s.format_soc(1.0), "100.00%");
+        // The endpoints are pinned, so decimals there would be noise.
+        assert_eq!(s.format_soc(1.0), "100%");
+        assert_eq!(s.format_soc(0.0), "0%");
+        assert_eq!(s.format_soc(0.999_96), "100%", "within rounding of full reads as full");
+        assert_eq!(s.format_soc(0.9987), "99.87%", "just below stays precise");
+        assert_eq!(s.format_soc(0.00002), "0%");
+        assert_eq!(s.format_soc(0.0021), "0.21%");
     }
 
     #[test]

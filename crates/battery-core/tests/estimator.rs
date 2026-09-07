@@ -374,3 +374,23 @@ fn charge_never_exceeds_capacity_when_the_reported_full_drifts_low() {
     assert!(est.full_mwh >= est.capacity_mwh, "{} < {}", est.full_mwh, est.capacity_mwh);
     assert!(est.soc <= 1.0, "state of charge above 100%: {}", est.soc);
 }
+
+/// Regression: bounding full-charge capacity by the charge present made `full`
+/// track capacity downwards, so the percentage sat at exactly 100% no matter
+/// how long the battery drained.
+#[test]
+fn the_reading_moves_as_soon_as_a_full_battery_starts_draining() {
+    let mut sim = Sim::new(1.0);
+    let full = sim.run(5, 0, ON_AC);
+    assert_eq!(full.phase, Phase::Full);
+    assert!((full.soc - 1.0).abs() < 1e-6, "should start at 100%: {}", full.soc);
+
+    let after = sim.run(30, -16_500, DISCHARGING);
+    assert!(after.soc < 0.99, "state of charge stuck at {}", after.soc);
+    assert!(
+        after.capacity_mwh < after.full_mwh,
+        "{} / {}",
+        after.capacity_mwh,
+        after.full_mwh
+    );
+}

@@ -88,20 +88,24 @@ impl Estimator {
         self.phase
     }
 
+    /// Full-charge capacity to measure against.
+    ///
+    /// Bounded below by the driver's own reported figure as well as the
+    /// smoothed one, which lags it. It must NOT be bounded by the charge
+    /// currently present: doing that makes `full` follow capacity downwards as
+    /// the battery drains, freezing the reading at exactly 100%.
     fn full_mwh(&self, s: &Sample) -> f64 {
         let smoothed = if self.model.full_mwh.ready() && self.model.full_mwh.mean > 1000.0 {
             self.model.full_mwh.mean
-        } else if s.full_mwh > 0 && s.full_mwh != UNKNOWN_CAPACITY {
+        } else {
+            0.0
+        };
+        let reported = if s.full_mwh > 0 && s.full_mwh != UNKNOWN_CAPACITY {
             s.full_mwh as f64
         } else {
-            1.0
+            0.0
         };
-        // The reported full-charge capacity drifts day to day and the smoothed
-        // figure lags it, so a freshly topped-up pack can read as holding more
-        // than its own capacity. It cannot: charge present is a lower bound on
-        // capacity, and without this the panel shows things like 39.2 / 38.8 Wh
-        // and a state of charge above 100%.
-        smoothed.max(s.capacity_mwh as f64)
+        smoothed.max(reported).max(1.0)
     }
 
     fn classify(&mut self, s: &Sample, full: f64) -> Phase {
@@ -162,6 +166,10 @@ impl Estimator {
             self.model.full_mwh.observe(s.full_mwh as f64, 0.5);
         }
         let full = self.full_mwh(&s);
+        // A freshly topped-up pack can report marginally more charge than its
+        // own stated capacity. Showing that would put the readout above 100%,
+        // so the charge is capped for display and prediction alike.
+        let capacity = (s.capacity_mwh as f64).min(full);
 
         let phase = self.classify(&s, full);
         if phase != self.phase {
@@ -202,8 +210,8 @@ impl Estimator {
             phase,
             // Derived from the same capacity figure shown beside it, so the
             // percentage and the watt-hours always agree.
-            soc: (s.capacity_mwh as f64 / full).clamp(0.0, 1.0),
-            capacity_mwh: s.capacity_mwh,
+            soc: (capacity / full).clamp(0.0, 1.0),
+            capacity_mwh: capacity.round() as u32,
             full_mwh: full.round() as u32,
             watts,
             to_empty: None,
@@ -216,12 +224,12 @@ impl Estimator {
         match phase {
             Phase::Discharging => {
                 let reserve = self.model.reserve_mwh(full);
-                let raw = self.integrate_discharge(s.capacity_mwh as f64, reserve, full);
+                let raw = self.integrate_discharge(capacity, reserve, full);
                 est.to_empty = raw.map(|r| self.finish(r, Kind::ToEmpty));
                 est.confidence = self.confidence(Kind::ToEmpty);
             }
             Phase::Charging => {
-                let cap = s.capacity_mwh as f64;
+                let cap = capacity;
                 let target80 = 0.80 * full;
                 if cap < target80 {
                     let raw = self.model.curve.time_to(cap, target80, full);
