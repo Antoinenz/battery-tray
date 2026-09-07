@@ -76,6 +76,44 @@ impl GraphKind {
     }
 }
 
+/// Which palette the popup panel uses.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Default, Serialize, Deserialize)]
+pub enum PanelTheme {
+    #[default]
+    System,
+    Dark,
+    Light,
+}
+
+impl PanelTheme {
+    pub const ALL: [PanelTheme; 3] = [PanelTheme::System, PanelTheme::Dark, PanelTheme::Light];
+    pub fn label(self) -> &'static str {
+        match self {
+            PanelTheme::System => "Follow system",
+            PanelTheme::Dark => "Always dark",
+            PanelTheme::Light => "Always light",
+        }
+    }
+    /// Resolve to a concrete choice given what the system is currently set to.
+    pub fn is_light(self, system_is_light: bool) -> bool {
+        match self {
+            PanelTheme::System => system_is_light,
+            PanelTheme::Dark => false,
+            PanelTheme::Light => true,
+        }
+    }
+}
+
+/// Levels offered for the low-battery alerts.
+pub const ALERT_LEVELS: [u8; 7] = [5, 10, 15, 20, 25, 30, 40];
+
+fn default_low() -> u8 {
+    20
+}
+fn default_critical() -> u8 {
+    10
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
 pub struct Settings {
     #[serde(default)]
@@ -87,6 +125,29 @@ pub struct Settings {
     /// rounded to whole percent.
     #[serde(default = "yes")]
     pub decimals: bool,
+    #[serde(default)]
+    pub theme: PanelTheme,
+    /// Keep the panel on screen until dismissed, instead of closing it as soon
+    /// as it loses focus.
+    #[serde(default)]
+    pub pin_panel: bool,
+    /// Where the user dragged the pinned panel to, if they have.
+    #[serde(default)]
+    pub panel_pos: Option<(i32, i32)>,
+
+    #[serde(default = "yes")]
+    pub alert_low: bool,
+    #[serde(default = "default_low")]
+    pub alert_low_pct: u8,
+    #[serde(default = "yes")]
+    pub alert_critical: bool,
+    #[serde(default = "default_critical")]
+    pub alert_critical_pct: u8,
+    /// Off by default: a notification on every charge is easy to resent.
+    #[serde(default)]
+    pub alert_80: bool,
+    #[serde(default)]
+    pub alert_full: bool,
 }
 
 fn yes() -> bool {
@@ -99,6 +160,15 @@ impl Default for Settings {
             tray_mode: TrayMode::default(),
             graph: GraphKind::default(),
             decimals: true,
+            theme: PanelTheme::default(),
+            pin_panel: false,
+            panel_pos: None,
+            alert_low: true,
+            alert_low_pct: default_low(),
+            alert_critical: true,
+            alert_critical_pct: default_critical(),
+            alert_80: false,
+            alert_full: false,
         }
     }
 }
@@ -155,6 +225,11 @@ mod tests {
             tray_mode: TrayMode::Time,
             graph: GraphKind::Level,
             decimals: true,
+            theme: PanelTheme::Light,
+            pin_panel: true,
+            panel_pos: Some((100, 200)),
+            alert_80: true,
+            ..Settings::default()
         };
         let back: Settings = serde_json::from_str(&serde_json::to_string(&s).unwrap()).unwrap();
         assert_eq!(back, s);
@@ -169,6 +244,22 @@ mod tests {
         assert_eq!(s.graph, GraphKind::Throughput);
         let empty: Settings = serde_json::from_str("{}").unwrap();
         assert_eq!(empty, Settings::default());
+    }
+
+    #[test]
+    fn theme_resolves_against_the_system_setting() {
+        assert!(PanelTheme::System.is_light(true));
+        assert!(!PanelTheme::System.is_light(false));
+        assert!(PanelTheme::Light.is_light(false), "an explicit choice wins");
+        assert!(!PanelTheme::Dark.is_light(true));
+    }
+
+    #[test]
+    fn alert_defaults_warn_but_do_not_nag() {
+        let s = Settings::default();
+        assert!(s.alert_low && s.alert_critical, "running out matters");
+        assert_eq!((s.alert_low_pct, s.alert_critical_pct), (20, 10));
+        assert!(!s.alert_80 && !s.alert_full, "charge milestones are opt-in");
     }
 
     #[test]

@@ -10,6 +10,7 @@ mod seedjob;
 mod settings_ui;
 
 use battery_core::estimator::{Estimator, HistPoint};
+use battery_core::alerts::{Alert, Alerts};
 use battery_core::settings::Settings;
 use battery_core::types::{fmt_duration, Estimates, Phase, Sample};
 use battery_core::{seed, store};
@@ -141,6 +142,10 @@ struct App {
     hover_pos: Option<(i32, i32)>,
     /// Where the tooltip is currently drawn, if it is showing.
     tooltip_at: Option<(i32, i32)>,
+    /// Cursor position and window origin when a pinned-panel drag began.
+    drag: Option<((i32, i32), (i32, i32))>,
+    dragged: bool,
+    alerts: Alerts,
 
     display_on: Arc<AtomicBool>,
     sample_interval: Arc<AtomicU32>,
@@ -246,6 +251,27 @@ fn tooltip_text(app: &App, est: &Estimates) -> String {
     format!("{head}\r\n{detail}").chars().take(120).collect()
 }
 
+/// Raise a tray notification. Windows keeps these in the notification
+/// centre, so one raised while the user is away is still there later.
+fn show_alert(app: &App, alert: Alert, est: &Estimates) {
+    unsafe {
+        let mut nid = notify_data(app.hwnd);
+        nid.uFlags = NIF_INFO;
+        nid.dwInfoFlags = match alert {
+            Alert::Low(_) | Alert::Critical(_) => NIIF_WARNING,
+            _ => NIIF_INFO,
+        };
+        let remaining = est.active().map(|p| fmt_duration(p.secs));
+        let title = wide(&alert.title());
+        let body = wide(&alert.body(remaining.as_deref()));
+        let n = title.len().min(nid.szInfoTitle.len());
+        nid.szInfoTitle[..n].copy_from_slice(&title[..n]);
+        let n = body.len().min(nid.szInfo.len());
+        nid.szInfo[..n].copy_from_slice(&body[..n]);
+        Shell_NotifyIconW(NIM_MODIFY, &nid);
+    }
+}
+
 fn update_tray(app: &mut App, est: &Estimates) {
     unsafe {
         let spec = IconSpec {
@@ -324,6 +350,14 @@ fn position_panel(app: &App) {
         );
 
         let margin = (10.0 * app.scale) as i32;
+        // A pinned panel stays where it was put; an unpinned one belongs to
+        // the tray icon it springs from.
+        if app.settings.pin_panel {
+            if let Some((px, py)) = app.settings.panel_pos {
+                SetWindowPos(app.panel, HWND_TOPMOST, px, py, w, h, SWP_NOACTIVATE);
+                return;
+            }
+        }
         let (mut x, mut y) = if have_anchor {
             (anchor.left + (anchor.right - anchor.left) / 2 - w / 2, anchor.top - h - margin)
         } else {
@@ -467,7 +501,31 @@ fn apply_action(app: &mut App, action: Action) {
             }
             app.settings.graph = g;
         }
+        Action::SetTheme(t) => {
+            if app.settings.theme == t {
+                return;
+            }
+            app.settings.theme = t;
+        }
         Action::ToggleDecimals => app.settings.decimals = !app.settings.decimals,
+        Action::TogglePin => {
+            app.settings.pin_panel = !app.settings.pin_panel;
+            if !app.settings.pin_panel {
+                // Back under the tray icon, where an unpinned panel belongs.
+                app.settings.panel_pos = None;
+                if app.panel_visible {
+                    position_panel(app);
+                }
+            }
+        }
+        Action::ToggleAlertLow => app.settings.alert_low = !app.settings.alert_low,
+        Action::ToggleAlertCritical => {
+            app.settings.alert_critical = !app.settings.alert_critical
+        }
+        Action::ToggleAlert80 => app.settings.alert_80 = !app.settings.alert_80,
+        Action::ToggleAlertFull => app.settings.alert_full = !app.settings.alert_full,
+        Action::SetLowLevel(v) => app.settings.alert_low_pct = v,
+        Action::SetCriticalLevel(v) => app.settings.alert_critical_pct = v,
         Action::ToggleStartup => {
             set_autostart(!autostart_enabled());
             if let Some(ui) = &app.settings_ui {
@@ -667,6 +725,7 @@ unsafe extern "system" fn panel_proc(hwnd: HWND, msg: u32, wp: WPARAM, lp: LPARA
                     &app.settings,
                     battery_win::now_ms(),
                     app.tooltip_at,
+                    app.settings.theme.is_light(app.light_theme),
                 );
             }
             EndPaint(hwnd, &ps);
@@ -692,6 +751,26 @@ unsafe extern "system" fn panel_proc(hwnd: HWND, msg: u32, wp: WPARAM, lp: LPARA
         }
         WM_MOUSEMOVE => {
             if let Some(app) = app_from(hwnd) {
+                // Dragging a pinned panel takes precedence over hovering.
+                if let Some((start_cursor, start_origin)) = app.drag {
+                    let mut cursor = POINT { x: 0, y: 0 };
+                    GetCursorPos(&mut cursor);
+                    let dx = cursor.x - start_cursor.0;
+                    let dy = cursor.y - start_cursor.1;
+                    if app.dragged || dx.abs() + dy.abs() > 4 {
+                        app.dragged = true;
+                        SetWindowPos(
+                            hwnd,
+                            HWND_TOPMOST,
+                            start_origin.0 + dx,
+                            start_origin.1 + dy,
+                            0,
+                            0,
+                            SWP_NOSIZE | SWP_NOACTIVATE,
+                        );
+                    }
+                    return 0;
+                }
                 let (x, y) = lparam_point(lp);
                 let r = panel::time_row_rect(app.scale);
                 let over = x >= r.left && x < r.right && y >= r.top && y < r.bottom;
@@ -717,13 +796,61 @@ unsafe extern "system" fn panel_proc(hwnd: HWND, msg: u32, wp: WPARAM, lp: LPARA
             }
             0
         }
-        WM_LBUTTONDOWN => 0,
-        WM_LBUTTONUP => 0,
+        WM_LBUTTONDOWN => {
+            if let Some(app) = app_from(hwnd) {
+                let mut cursor = POINT { x: 0, y: 0 };
+                GetCursorPos(&mut cursor);
+                let mut wr = RECT { left: 0, top: 0, right: 0, bottom: 0 };
+                GetWindowRect(hwnd, &mut wr);
+                app.drag = Some(((cursor.x, cursor.y), (wr.left, wr.top)));
+                app.dragged = false;
+                SetCapture(hwnd);
+            }
+            0
+        }
+        WM_LBUTTONUP => {
+            if let Some(app) = app_from(hwnd) {
+                ReleaseCapture();
+                let dragged = app.dragged;
+                app.drag = None;
+                app.dragged = false;
+                if dragged {
+                    // Remember where it was left, so it reopens there.
+                    let mut wr = RECT { left: 0, top: 0, right: 0, bottom: 0 };
+                    GetWindowRect(hwnd, &mut wr);
+                    app.settings.panel_pos = Some((wr.left, wr.top));
+                    let _ = store::save_settings(&app.settings);
+                } else {
+                    // A press that did not move is a click: toggle the graph.
+                    let (x, y) = lparam_point(lp);
+                    let mut rc = RECT { left: 0, top: 0, right: 0, bottom: 0 };
+                    GetClientRect(hwnd, &mut rc);
+                    let r = panel::chart_rect(rc.right, rc.bottom, app.scale);
+                    if x >= r.left && x < r.right && y >= r.top && y < r.bottom {
+                        app.settings.graph = app.settings.graph.toggled();
+                        settings_changed(app);
+                    }
+                }
+            }
+            0
+        }
+        WM_KEYDOWN => {
+            if wp as u32 == VK_ESCAPE as u32 {
+                if let Some(app) = app_from(hwnd) {
+                    hide_panel(app);
+                }
+            }
+            0
+        }
         WM_ACTIVATE => {
             trace(&format!("panel WM_ACTIVATE wp={}", wp & 0xFFFF));
             if (wp & 0xFFFF) as u32 == WA_INACTIVE {
                 if let Some(app) = app_from(hwnd) {
-                    hide_panel(app);
+                    // A pinned panel is dismissed deliberately, not by
+                    // looking away from it.
+                    if !app.settings.pin_panel {
+                        hide_panel(app);
+                    }
                 }
             }
             0
@@ -738,8 +865,9 @@ unsafe extern "system" fn settings_proc(hwnd: HWND, msg: u32, wp: WPARAM, lp: LP
         WM_COMMAND => {
             let code = ((wp >> 16) & 0xFFFF) as u32;
             let id = (wp & 0xFFFF) as u16;
-            if code == BN_CLICKED {
-                if let (Some(app), Some(action)) = (app_from(hwnd), settings_ui::action_for(id)) {
+            if let Some(app) = app_from(hwnd) {
+                let action = app.settings_ui.as_ref().and_then(|ui| ui.action_for(id, code));
+                if let Some(action) = action {
                     apply_action(app, action);
                 }
             }
@@ -789,6 +917,9 @@ fn drain_messages(app: &mut App) {
     }
     let Some(est) = latest else { return };
     update_tray(app, &est);
+    if let Some(alert) = app.alerts.evaluate(&est, &app.settings) {
+        show_alert(app, alert, &est);
+    }
     app.last = Some(est);
 
     // The window shrinks when there is no graph worth showing, rather than
@@ -964,6 +1095,9 @@ fn main() {
             panel_has_graph: true,
             hover_pos: None,
             tooltip_at: None,
+            drag: None,
+            dragged: false,
+            alerts: Alerts::default(),
             display_on: display_on.clone(),
             sample_interval: sample_interval.clone(),
             rx,
@@ -982,6 +1116,7 @@ fn main() {
             settings_hwnd,
             hinst,
             dpi_scale(settings_hwnd),
+            &app.settings,
         ));
 
         add_tray(app, hwnd);

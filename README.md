@@ -41,10 +41,16 @@ A plain tabbed window built from standard Windows controls.
 
 | Tab | Contents |
 |---|---|
-| General | Start with Windows · decimal places in the percentage |
-| Display | Tray icon: battery preview / percentage / wattage / time / logo. Graph: battery level or throughput |
+| General | Start with Windows · decimal places · keep the panel open |
+| Display | Tray icon: battery preview / percentage / wattage / time / logo. Graph: battery level or throughput. Panel theme: follow system / dark / light |
+| Alerts | Low and critical warnings with their levels, plus optional 80% and fully-charged notifications |
 | Battery | Full-charge vs design capacity, health, charge cycles, chemistry |
 | Learning | What the model has learned, and Reset learned data |
+
+A pinned panel stays put until dismissed and can be dragged anywhere on the
+screen; it reopens where it was left. Alerts latch when they fire and only
+rearm once the charge has clearly moved away from the threshold, so a battery
+resting on the warning level cannot produce a stream of them.
 
 The settings window is deliberately not custom-drawn. The panel has to be — it
 is a chart — but settings are a form, and real `BUTTON`, `STATIC` and
@@ -155,7 +161,7 @@ instead of showing an empty band.
 
 ```
 crates/battery-core   pure Rust: filters, curve, priors, estimator, scoring,
-                      persistence, report seeding, glyphs. No Win32, 87 tests.
+                      persistence, report seeding, alerts, glyphs. No Win32, 99 tests.
 crates/battery-win    battery IOCTLs, CPU load
 crates/battery-tray   tray icon, popup panel, settings window, message loop
 ```
@@ -163,7 +169,7 @@ crates/battery-tray   tray icon, popup panel, settings window, message loop
 ## Cost
 
 Measured while running: **~2.5 MB private working set**, ~0.05 s CPU per minute,
-a 516 KB executable, no runtime dependency. Sampling blocks in the kernel via
+a 527 KB executable, no runtime dependency. Sampling blocks in the kernel via
 `BATTERY_WAIT_STATUS` and wakes on real change or a 5-second timeout, with a
 fallback to timed polling if a driver ignores the wait. Tray icons are cached by
 appearance, so a sample that does not change the displayed value draws nothing.

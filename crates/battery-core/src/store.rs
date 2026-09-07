@@ -212,7 +212,12 @@ mod tests {
     #[test]
     fn settings_survive_a_round_trip_and_tolerate_junk() {
         use crate::settings::{GraphKind, TrayMode};
-        let s = Settings { tray_mode: TrayMode::Watts, graph: GraphKind::Level, decimals: true };
+        let s = Settings {
+            tray_mode: TrayMode::Watts,
+            graph: GraphKind::Level,
+            decimals: true,
+            ..Settings::default()
+        };
         assert_eq!(parse_settings(&serde_json::to_string(&s).unwrap()), s);
         // Anything unreadable falls back rather than losing the app.
         for junk in ["", "{", "[]", "null", "not json"] {

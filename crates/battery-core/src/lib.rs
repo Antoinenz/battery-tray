@@ -4,6 +4,7 @@
 //! be driven from recorded traces in tests. The platform layer feeds it
 //! [`Sample`]s and renders the [`Estimates`] it returns.
 
+pub mod alerts;
 pub mod curve;
 pub mod estimator;
 pub mod glyph;
@@ -16,5 +17,6 @@ pub mod types;
 
 pub use estimator::{Estimator, HistPoint};
 pub use model::{Kind, Model};
-pub use settings::{GraphKind, Settings, TrayMode};
+pub use alerts::{Alert, Alerts};
+pub use settings::{GraphKind, PanelTheme, Settings, TrayMode};
 pub use types::{fmt_duration, Estimates, Phase, Prediction, Sample};

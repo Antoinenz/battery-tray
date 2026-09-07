@@ -36,16 +36,56 @@ pub fn panel_height(has_graph: bool) -> i32 {
 #[derive(Clone, Copy)]
 pub(crate) struct Rgb(pub u8, pub u8, pub u8);
 
-pub(crate) const BG: Rgb = Rgb(0x18, 0x19, 0x1B);
-pub(crate) const BORDER: Rgb = Rgb(0x33, 0x35, 0x39);
-pub(crate) const TEXT: Rgb = Rgb(0xF3, 0xF3, 0xF4);
-pub(crate) const DIM: Rgb = Rgb(0x9A, 0xA0, 0xA6);
-pub(crate) const RULE: Rgb = Rgb(0x2A, 0x2C, 0x30);
-pub(crate) const TIP_BG: Rgb = Rgb(0x2C, 0x2E, 0x33);
-pub(crate) const GREEN: Rgb = Rgb(0x4A, 0xDE, 0x80);
-const AMBER: Rgb = Rgb(0xFB, 0xBF, 0x24);
-const RED: Rgb = Rgb(0xF8, 0x71, 0x71);
-const BLUE: Rgb = Rgb(0x60, 0xA5, 0xFA);
+/// The panel's colours. Two of these exist so the flyout can follow the system
+/// theme; the accents differ between them because a green that reads well on
+/// near-black is too pale to be legible on near-white.
+#[derive(Clone, Copy)]
+pub struct Palette {
+    pub bg: Rgb,
+    pub border: Rgb,
+    pub text: Rgb,
+    pub dim: Rgb,
+    pub rule: Rgb,
+    pub tip_bg: Rgb,
+    pub green: Rgb,
+    pub amber: Rgb,
+    pub red: Rgb,
+    pub blue: Rgb,
+}
+
+pub const DARK: Palette = Palette {
+    bg: Rgb(0x18, 0x19, 0x1B),
+    border: Rgb(0x33, 0x35, 0x39),
+    text: Rgb(0xF3, 0xF3, 0xF4),
+    dim: Rgb(0x9A, 0xA0, 0xA6),
+    rule: Rgb(0x2A, 0x2C, 0x30),
+    tip_bg: Rgb(0x2C, 0x2E, 0x33),
+    green: Rgb(0x4A, 0xDE, 0x80),
+    amber: Rgb(0xFB, 0xBF, 0x24),
+    red: Rgb(0xF8, 0x71, 0x71),
+    blue: Rgb(0x60, 0xA5, 0xFA),
+};
+
+pub const LIGHT: Palette = Palette {
+    bg: Rgb(0xFB, 0xFB, 0xFC),
+    border: Rgb(0xD6, 0xD9, 0xDE),
+    text: Rgb(0x1A, 0x1C, 0x1F),
+    dim: Rgb(0x5F, 0x66, 0x6E),
+    rule: Rgb(0xE6, 0xE8, 0xEC),
+    tip_bg: Rgb(0xFF, 0xFF, 0xFF),
+    green: Rgb(0x15, 0x9E, 0x52),
+    amber: Rgb(0xB4, 0x7A, 0x06),
+    red: Rgb(0xD3, 0x30, 0x30),
+    blue: Rgb(0x1D, 0x64, 0xD8),
+};
+
+pub fn palette(light: bool) -> Palette {
+    if light {
+        LIGHT
+    } else {
+        DARK
+    }
+}
 
 pub(crate) fn colorref(c: Rgb) -> COLORREF {
     (c.0 as u32) | ((c.1 as u32) << 8) | ((c.2 as u32) << 16)
@@ -53,24 +93,23 @@ pub(crate) fn colorref(c: Rgb) -> COLORREF {
 
 /// Colour of the live power reading: energy going in reads green, energy
 /// leaving reads red, matching the two halves of the throughput graph.
-fn flow_colour(est: &Estimates) -> Rgb {
+fn flow_colour(est: &Estimates, p: &Palette) -> Rgb {
     match est.phase {
-        Phase::Charging => GREEN,
-        Phase::Full => GREEN,
-        Phase::Plateau => BLUE,
-        Phase::Discharging if est.soc < 0.10 => RED,
-        Phase::Discharging if est.soc < 0.25 => AMBER,
-        Phase::Discharging => RED,
-        Phase::Unknown => DIM,
+        Phase::Charging | Phase::Full => p.green,
+        Phase::Plateau => p.blue,
+        Phase::Discharging if est.soc < 0.10 => p.red,
+        Phase::Discharging if est.soc < 0.25 => p.amber,
+        Phase::Discharging => p.red,
+        Phase::Unknown => p.dim,
     }
 }
 
 /// Colour for the battery-level graph, which has no sign to key off.
-fn level_colour(est: &Estimates) -> Rgb {
+fn level_colour(est: &Estimates, p: &Palette) -> Rgb {
     match est.soc {
-        s if s < 0.10 => RED,
-        s if s < 0.25 => AMBER,
-        _ => GREEN,
+        s if s < 0.10 => p.red,
+        s if s < 0.25 => p.amber,
+        _ => p.green,
     }
 }
 
@@ -248,6 +287,7 @@ pub fn has_graph(hist: &[HistPoint], kind: GraphKind, now_ms: i64) -> bool {
     hist.iter().filter(|p| p.t_ms >= start && p.t_ms <= now_ms).count() >= 4
 }
 
+#[allow(clippy::too_many_arguments)]
 fn draw_chart(
     cv: &mut Canvas,
     r: RECT,
@@ -256,6 +296,7 @@ fn draw_chart(
     now_ms: i64,
     est: &Estimates,
     fade_w: i32,
+    p: &Palette,
 ) {
     let (w, h) = (r.right - r.left, r.bottom - r.top);
     if w < 8 || h < 8 {
@@ -296,12 +337,12 @@ fn draw_chart(
 
     let to_y = |v: f64| r.bottom as f64 - 1.0 - (v - lo) / (hi - lo) * (h - 2) as f64;
     let base_y = to_y(base_value);
-    let level = level_colour(est);
+    let level = level_colour(est, p);
 
     if kind == GraphKind::Throughput {
         for x in r.left..r.right {
             let f = ((x - r.left) as f64 / fade_w.max(1) as f64).clamp(0.0, 1.0);
-            cv.blend(x, base_y.round() as i32, RULE, 0.9 * f);
+            cv.blend(x, base_y.round() as i32, p.rule, 0.9 * f);
         }
     }
 
@@ -319,9 +360,9 @@ fn draw_chart(
         let col = match kind {
             GraphKind::Throughput => {
                 if v >= 0.0 {
-                    GREEN
+                    p.green
                 } else {
-                    RED
+                    p.red
                 }
             }
             GraphKind::Level => level,
@@ -460,6 +501,7 @@ pub fn render(
     now_ms: i64,
     // Where to anchor the hover tooltip, in client coordinates.
     tooltip_at: Option<(i32, i32)>,
+    light: bool,
 ) {
     let s = |v: i32| scaled(v, scale);
     unsafe {
@@ -478,14 +520,15 @@ pub fn render(
             return;
         }
         let old = SelectObject(mem, dib as HGDIOBJ);
-        let flow = flow_colour(est);
+        let p = palette(light);
+        let flow = flow_colour(est, &p);
         let right = width - s(PAD);
         let show_graph = has_graph(hist, settings.graph, now_ms) && height > s(HEADER_H) + 8;
 
         {
             let px = std::slice::from_raw_parts_mut(bits as *mut u8, (width * height * 4) as usize);
             let mut cv = Canvas { px, w: width, h: height };
-            cv.fill(BG);
+            cv.fill(p.bg);
             if show_graph {
                 draw_chart(
                     &mut cv,
@@ -495,13 +538,14 @@ pub fn render(
                     now_ms,
                     est,
                     s(FADE_W),
+                    &p,
                 );
             }
-            cv.hline(s(PAD), right, s(92), RULE, 1.0);
-            cv.rect_outline(RECT { left: 0, top: 0, right: width, bottom: height }, BORDER, 1.0);
+            cv.hline(s(PAD), right, s(92), p.rule, 1.0);
+            cv.rect_outline(RECT { left: 0, top: 0, right: width, bottom: height }, p.border, 1.0);
         }
 
-        text(mem, &settings.format_soc(est.soc), s(PAD), s(10), fonts.big, TEXT, None);
+        text(mem, &settings.format_soc(est.soc), s(PAD), s(10), fonts.big, p.text, None);
         text(mem, &flow_line(est), s(PAD), s(58), fonts.body, flow, None);
         text(
             mem,
@@ -513,7 +557,7 @@ pub fn render(
             0,
             s(61),
             fonts.small,
-            DIM,
+            p.dim,
             Some(right),
         );
 
@@ -522,16 +566,16 @@ pub fn render(
         // said so above, so nothing is repeated here.
         let row_y = s(102);
         match est.active() {
-            Some(p) => {
-                text(mem, est.active_label(), s(PAD), row_y, fonts.body, DIM, None);
-                text(mem, &fmt_duration(p.secs), 0, row_y - s(1), fonts.value, TEXT, Some(right));
+            Some(pred) => {
+                text(mem, est.active_label(), s(PAD), row_y, fonts.body, p.dim, None);
+                text(mem, &fmt_duration(pred.secs), 0, row_y - s(1), fonts.value, p.text, Some(right));
             }
             None if est.phase == Phase::Plateau => {
                 let note = est.note.clone().unwrap_or_default();
-                text(mem, &note, s(PAD), row_y, fonts.body, TEXT, None);
+                text(mem, &note, s(PAD), row_y, fonts.body, p.text, None);
             }
             None if est.phase != Phase::Full => {
-                text(mem, "Measuring...", s(PAD), row_y, fonts.body, DIM, None);
+                text(mem, "Measuring...", s(PAD), row_y, fonts.body, p.dim, None);
             }
             None => {}
         }
@@ -553,19 +597,19 @@ pub fn render(
                 let px =
                     std::slice::from_raw_parts_mut(bits as *mut u8, (width * height * 4) as usize);
                 let mut cv = Canvas { px, w: width, h: height };
-                let r = RECT { left: bx, top: by, right: bx + box_w, bottom: by + box_h };
-                cv.round_rect(r, s(7) as f64, TIP_BG, 0.98);
-                cv.round_rect(r, s(7) as f64, BORDER, 0.5);
+                let tip = RECT { left: bx, top: by, right: bx + box_w, bottom: by + box_h };
+                cv.round_rect(tip, s(7) as f64, p.tip_bg, 0.98);
+                cv.round_rect(tip, s(7) as f64, p.border, 0.5);
                 let inner = RECT {
-                    left: r.left + 1,
-                    top: r.top + 1,
-                    right: r.right - 1,
-                    bottom: r.bottom - 1,
+                    left: tip.left + 1,
+                    top: tip.top + 1,
+                    right: tip.right - 1,
+                    bottom: tip.bottom - 1,
                 };
-                cv.round_rect(inner, s(6) as f64, TIP_BG, 1.0);
+                cv.round_rect(inner, s(6) as f64, p.tip_bg, 1.0);
             }
             for (i, l) in lines.iter().enumerate() {
-                let c = if i == 0 { TEXT } else { DIM };
+                let c = if i == 0 { p.text } else { p.dim };
                 text(mem, l, bx + s(10), by + s(6) + line_h * i as i32, fonts.small, c, None);
             }
         }
