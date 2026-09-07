@@ -1,0 +1,21 @@
+[package]
+name = "battery-win"
+version.workspace = true
+edition.workspace = true
+
+[dependencies]
+battery-core = { path = "../battery-core" }
+
+[dependencies.windows-sys]
+version = "0.60"
+features = [
+  "Win32_Foundation",
+  "Win32_Security",
+  "Win32_Devices_DeviceAndDriverInstallation",
+  "Win32_Storage_FileSystem",
+  "Win32_System_IO",
+  "Win32_System_Threading",
+  "Win32_System_SystemInformation",
+  "Win32_System_Registry",
+  "Win32_System_Power",
+]

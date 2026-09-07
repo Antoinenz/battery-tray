@@ -1,0 +1,6 @@
+# Build output
+/target/
+
+# Generated from crates/battery-core/src/glyph.rs by the build script.
+# Kept out of the tree so the artwork cannot drift from the code that draws it.
+/assets/logo.ico
