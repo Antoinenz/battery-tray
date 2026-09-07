@@ -394,3 +394,44 @@ fn the_reading_moves_as_soon_as_a_full_battery_starts_draining() {
         after.full_mwh
     );
 }
+
+/// The gauge only moves in whole steps, so a two-decimal readout taken straight
+/// from it lurches. The track lets the display fill in between.
+#[test]
+fn the_charge_level_can_be_interpolated_between_gauge_steps() {
+    let mut sim = Sim::new(0.80);
+    let est = sim.run(20, -16_500, DISCHARGING);
+
+    let t = est.soc_track;
+    assert!(t.per_ms < 0.0, "discharging should drift downward: {}", t.per_ms);
+    assert!(t.quantum > 0.0 && t.quantum < 0.01, "one step is small: {}", t.quantum);
+
+    // Immediately after a reading, the interpolated value is the reading.
+    assert!((t.at(t.as_of_ms) - t.base).abs() < 1e-9);
+
+    // A moment later it has moved, but never by more than a whole step -- past
+    // that the gauge itself would have changed.
+    let soon = t.at(t.as_of_ms + 2_000);
+    assert!(soon < t.base, "should have drifted down");
+    assert!(t.base - soon <= t.quantum + 1e-9);
+
+    let much_later = t.at(t.as_of_ms + 10_000_000);
+    assert!(
+        (t.base - much_later - t.quantum).abs() < 1e-9,
+        "drift must saturate at one step, got {much_later}"
+    );
+}
+
+#[test]
+fn interpolation_stays_in_range_and_reverses_while_charging() {
+    let mut sim = Sim::new(0.40);
+    let est = sim.run(20, 26_000, CHARGING);
+    let t = est.soc_track;
+    assert!(t.per_ms > 0.0, "charging should drift upward");
+    assert!(t.at(t.as_of_ms + 5_000) > t.base);
+
+    // Never outside 0..1, however long the gap.
+    let mut sim = Sim::new(0.999);
+    let est = sim.run(10, 26_000, CHARGING);
+    assert!(est.soc_track.at(est.soc_track.as_of_ms + 10_000_000) <= 1.0);
+}

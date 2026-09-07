@@ -42,20 +42,30 @@ A plain tabbed window built from standard Windows controls.
 | Tab | Contents |
 |---|---|
 | General | Start with Windows · decimal places · keep the panel open |
-| Display | Tray icon: battery preview / percentage / wattage / time / logo. Graph: battery level or throughput. Panel theme: follow system / dark / light |
+| Display | Tray icon: battery preview / percentage / wattage / time / logo. Graph: kind, whether to show it at all, the zero line, and single-direction fitting. Panel theme: follow system / dark / light |
 | Alerts | Low and critical warnings with their levels, plus optional 80% and fully-charged notifications |
 | Battery | Full-charge vs design capacity, health, charge cycles, chemistry |
 | Learning | What the model has learned, and Reset learned data |
 
 A pinned panel stays put until dismissed and can be dragged anywhere on the
-screen; it reopens where it was left. Alerts latch when they fire and only
-rearm once the charge has clearly moved away from the threshold, so a battery
-resting on the warning level cannot produce a stream of them.
+screen; it reopens where it was left. An unpinned one is anchored to the tray
+icon, grows a small callout tail pointing back at it, and cannot be dragged —
+it belongs to the icon it came from. Alerts latch when they fire and only rearm
+once the charge has clearly moved away from the threshold, so a battery resting
+on the warning level cannot produce a stream of them.
 
 The settings window is deliberately not custom-drawn. The panel has to be — it
 is a chart — but settings are a form, and real `BUTTON`, `STATIC` and
 `SysTabControl32` controls inherit theming, keyboard navigation, focus rings,
 high-contrast modes and screen-reader support for free.
+
+The charge gauge only reports whole 10 mWh steps — about 0.026% on this pack —
+so a two-decimal readout taken straight from it lurches. The panel dead-reckons
+between steps from the measured power flow, which is precisely the quantity
+that says how fast the true value is moving, and never drifts more than one
+step from the last real reading. The result is held monotonic in the direction
+the battery is actually going, so it cannot tick backwards while draining.
+Measured on a charging pack: 87.61% → 87.65% → 87.71% over nine seconds.
 
 Percentages in the *tray* stay whole even with decimals enabled. Legibility at
 20 px is set by how many glyphs must fit, so time is stacked as two lines —
@@ -151,6 +161,12 @@ oldest part fades out at the left edge rather than being clipped mid-stroke,
 and throughput is coloured by direction — into the battery green, out of it red,
 split at the zero line.
 
+When every reading in the window flows the same way — nothing has been plugged
+in for an hour, say — the plot is handed entirely to that direction and the
+zero line is dropped, rather than holding half the height empty for a sign that
+never appears. Both that and the zero line can be turned off, as can the graph
+itself.
+
 It draws only the span it actually has samples for. Holding the earliest reading
 across the rest of the window would render hours the app was not running as a
 flat line, which reads as real history rather than the absence of it. When there
@@ -161,7 +177,7 @@ instead of showing an empty band.
 
 ```
 crates/battery-core   pure Rust: filters, curve, priors, estimator, scoring,
-                      persistence, report seeding, alerts, glyphs. No Win32, 99 tests.
+                      persistence, report seeding, alerts, glyphs. No Win32, 102 tests.
 crates/battery-win    battery IOCTLs, CPU load
 crates/battery-tray   tray icon, popup panel, settings window, message loop
 ```
@@ -169,7 +185,7 @@ crates/battery-tray   tray icon, popup panel, settings window, message loop
 ## Cost
 
 Measured while running: **~2.5 MB private working set**, ~0.05 s CPU per minute,
-a 527 KB executable, no runtime dependency. Sampling blocks in the kernel via
+a 530 KB executable, no runtime dependency. Sampling blocks in the kernel via
 `BATTERY_WAIT_STATUS` and wakes on real change or a 5-second timeout, with a
 fallback to timed polling if a driver ignores the wait. Tray icons are cached by
 appearance, so a sample that does not change the displayed value draws nothing.

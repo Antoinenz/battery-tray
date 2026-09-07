@@ -140,6 +140,12 @@ mod tests {
             to_full: None,
             note: None,
             confidence: 0.5,
+            soc_track: crate::types::SocTrack {
+                base: soc,
+                as_of_ms: 0,
+                per_ms: 0.0,
+                quantum: 0.00026,
+            },
         }
     }
 

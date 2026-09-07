@@ -127,6 +127,17 @@ pub struct Settings {
     pub decimals: bool,
     #[serde(default)]
     pub theme: PanelTheme,
+    /// Draw the graph at all.
+    #[serde(default = "yes")]
+    pub show_graph: bool,
+    /// Draw the zero line across a throughput graph.
+    #[serde(default = "yes")]
+    pub graph_zero_line: bool,
+    /// When every reading in the window flows the same way, give the
+    /// whole plot to that direction instead of holding half of it empty
+    /// for a sign that is not present.
+    #[serde(default = "yes")]
+    pub graph_autofit: bool,
     /// Keep the panel on screen until dismissed, instead of closing it as soon
     /// as it loses focus.
     #[serde(default)]
@@ -161,6 +172,9 @@ impl Default for Settings {
             graph: GraphKind::default(),
             decimals: true,
             theme: PanelTheme::default(),
+            show_graph: true,
+            graph_zero_line: true,
+            graph_autofit: true,
             pin_panel: false,
             panel_pos: None,
             alert_low: true,
@@ -244,6 +258,12 @@ mod tests {
         assert_eq!(s.graph, GraphKind::Throughput);
         let empty: Settings = serde_json::from_str("{}").unwrap();
         assert_eq!(empty, Settings::default());
+    }
+
+    #[test]
+    fn graph_options_start_on() {
+        let s = Settings::default();
+        assert!(s.show_graph && s.graph_zero_line && s.graph_autofit);
     }
 
     #[test]

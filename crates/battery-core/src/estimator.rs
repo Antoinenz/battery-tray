@@ -49,6 +49,12 @@ pub struct Estimator {
     history: VecDeque<HistPoint>,
     last_hist_ms: i64,
     dirty: bool,
+    /// When the capacity gauge last reported a different value, and what it
+    /// said. Interpolating the displayed charge level starts from here.
+    last_step: Option<(i64, u32)>,
+    /// Smallest non-zero change the gauge has been seen to make. Learned
+    /// rather than assumed, since it is a property of the pack.
+    step_mwh: f64,
 }
 
 impl Estimator {
@@ -66,6 +72,8 @@ impl Estimator {
             history: VecDeque::new(),
             last_hist_ms: i64::MIN,
             dirty: false,
+            last_step: None,
+            step_mwh: 10.0,
         }
     }
 
@@ -142,6 +150,23 @@ impl Estimator {
         }
     }
 
+    /// Note when the capacity reading actually changes, and how big its
+    /// steps are. Both are needed to interpolate a smooth charge level.
+    fn observe_gauge_step(&mut self, s: &Sample) {
+        match self.last_step {
+            Some((_, cap)) if cap == s.capacity_mwh => {}
+            Some((_, cap)) => {
+                let delta = (s.capacity_mwh as f64 - cap as f64).abs();
+                // A jump after sleep is not a gauge step.
+                if delta > 0.0 && delta <= 200.0 {
+                    self.step_mwh = self.step_mwh.min(delta).max(1.0);
+                }
+                self.last_step = Some((s.t_ms, s.capacity_mwh));
+            }
+            None => self.last_step = Some((s.t_ms, s.capacity_mwh)),
+        }
+    }
+
     fn reset_filters(&mut self) {
         self.fast.reset();
         self.slow.reset();
@@ -186,6 +211,7 @@ impl Estimator {
             self.slow.update(s.t_ms, magnitude);
             self.session.observe(magnitude, 1.0);
         }
+        self.observe_gauge_step(&s);
         self.cap_slope.push(s.t_ms, s.capacity_mwh as f64);
         // Capacity slope in mW, signed the same way as the reported rate.
         let slope_mw = self.cap_slope.slope_per_s().map(|v| v * 3600.0);
@@ -206,6 +232,20 @@ impl Estimator {
         self.push_history(&s, watts);
 
         // ---- predictions --------------------------------------------------
+        // Charge level per millisecond, from the power actually flowing.
+        let flow_mw = if s.rate_known() && magnitude > 0.0 {
+            let sign = if phase == Phase::Discharging { -1.0 } else { 1.0 };
+            sign * self.fast.get().unwrap_or(magnitude)
+        } else {
+            slope_mw.unwrap_or(0.0)
+        };
+        let soc_track = SocTrack {
+            base: (capacity / full).clamp(0.0, 1.0),
+            as_of_ms: self.last_step.map(|(t, _)| t).unwrap_or(s.t_ms),
+            per_ms: flow_mw / full / 3_600_000.0,
+            quantum: (self.step_mwh / full).clamp(0.0, 0.05),
+        };
+
         let mut est = Estimates {
             phase,
             // Derived from the same capacity figure shown beside it, so the
@@ -219,6 +259,7 @@ impl Estimator {
             to_full: None,
             note: None,
             confidence: 0.0,
+            soc_track,
         };
 
         match phase {

@@ -21,6 +21,10 @@ pub const PANEL_H_COMPACT: i32 = HEADER_H + 4;
 pub const PANEL_H_FULL: i32 = HEADER_H + GRAPH_H;
 
 const PAD: i32 = 18;
+/// The callout tail that points back at the tray icon, when the panel is
+/// anchored to it rather than pinned somewhere by the user.
+pub const TAIL_W: i32 = 20;
+pub const TAIL_H: i32 = 9;
 /// The oldest part of the graph fades out, so data scrolling off the left edge
 /// leaves rather than being clipped mid-stroke.
 const FADE_W: i32 = 54;
@@ -151,16 +155,6 @@ impl Canvas<'_> {
             self.blend(x, y, c, a);
         }
     }
-    pub fn rect_outline(&mut self, r: RECT, c: Rgb, a: f64) {
-        for x in r.left..r.right {
-            self.blend(x, r.top, c, a);
-            self.blend(x, r.bottom - 1, c, a);
-        }
-        for y in r.top..r.bottom {
-            self.blend(r.left, y, c, a);
-            self.blend(r.right - 1, y, c, a);
-        }
-    }
     pub fn round_rect(&mut self, r: RECT, radius: f64, c: Rgb, a: f64) {
         let (x0, y0) = (r.left as f64, r.top as f64);
         let (x1, y1) = (r.right as f64 - 1.0, r.bottom as f64 - 1.0);
@@ -281,9 +275,13 @@ fn densify_and_smooth(cols: &[Option<f64>], sigma: f64) -> Option<Vec<Option<f64
     Some(out)
 }
 
-/// Whether there is enough recent history to be worth drawing.
-pub fn has_graph(hist: &[HistPoint], kind: GraphKind, now_ms: i64) -> bool {
-    let start = now_ms - kind.span_ms();
+/// Whether a graph should be drawn at all: the user has to want one, and
+/// there has to be enough recent history for it to say anything.
+pub fn has_graph(hist: &[HistPoint], settings: &Settings, now_ms: i64) -> bool {
+    if !settings.show_graph {
+        return false;
+    }
+    let start = now_ms - settings.graph.span_ms();
     hist.iter().filter(|p| p.t_ms >= start && p.t_ms <= now_ms).count() >= 4
 }
 
@@ -297,6 +295,8 @@ fn draw_chart(
     est: &Estimates,
     fade_w: i32,
     p: &Palette,
+    zero_line: bool,
+    autofit: bool,
 ) {
     let (w, h) = (r.right - r.left, r.bottom - r.top);
     if w < 8 || h < 8 {
@@ -314,12 +314,32 @@ fn draw_chart(
         return;
     }
 
+    // True when the plot has been given over to a single direction, in which
+    // case zero sits at an edge and a line along it would say nothing.
+    let mut collapsed = false;
     let base_value = match kind {
         GraphKind::Throughput => {
-            // Centred on zero so charge and drain read as opposite directions.
-            let m = lo.abs().max(hi.abs()).max(0.5) * 1.2;
-            lo = -m;
-            hi = m;
+            let up = hi.max(0.0);
+            let down = (-lo).max(0.0);
+            let (major, minor) = (up.max(down), up.min(down));
+            if autofit && major > 0.0 && minor < major * 0.05 {
+                // Everything flowed one way over this window, so hand the whole
+                // plot to that direction rather than holding half of it empty
+                // for a sign that never appeared.
+                collapsed = true;
+                if up >= down {
+                    lo = 0.0;
+                    hi = up * 1.15;
+                } else {
+                    lo = -down * 1.15;
+                    hi = 0.0;
+                }
+            } else {
+                // Centred on zero so charge and drain read as opposite directions.
+                let m = major.max(0.5) * 1.2;
+                lo = -m;
+                hi = m;
+            }
             0.0
         }
         GraphKind::Level => {
@@ -339,7 +359,7 @@ fn draw_chart(
     let base_y = to_y(base_value);
     let level = level_colour(est, p);
 
-    if kind == GraphKind::Throughput {
+    if kind == GraphKind::Throughput && zero_line && !collapsed {
         for x in r.left..r.right {
             let f = ((x - r.left) as f64 / fade_w.max(1) as f64).clamp(0.0, 1.0);
             cv.blend(x, base_y.round() as i32, p.rule, 0.9 * f);
@@ -502,6 +522,10 @@ pub fn render(
     // Where to anchor the hover tooltip, in client coordinates.
     tooltip_at: Option<(i32, i32)>,
     light: bool,
+    // Charge level to print, interpolated between gauge steps.
+    soc_display: f64,
+    // Leave a gap in the bottom border for the callout tail.
+    tail: bool,
 ) {
     let s = |v: i32| scaled(v, scale);
     unsafe {
@@ -523,7 +547,7 @@ pub fn render(
         let p = palette(light);
         let flow = flow_colour(est, &p);
         let right = width - s(PAD);
-        let show_graph = has_graph(hist, settings.graph, now_ms) && height > s(HEADER_H) + 8;
+        let show_graph = has_graph(hist, settings, now_ms) && height > s(HEADER_H) + 8;
 
         {
             let px = std::slice::from_raw_parts_mut(bits as *mut u8, (width * height * 4) as usize);
@@ -539,13 +563,26 @@ pub fn render(
                     est,
                     s(FADE_W),
                     &p,
+                    settings.graph_zero_line,
+                    settings.graph_autofit,
                 );
             }
             cv.hline(s(PAD), right, s(92), p.rule, 1.0);
-            cv.rect_outline(RECT { left: 0, top: 0, right: width, bottom: height }, p.border, 1.0);
+            // The border is drawn side by side so the bottom edge can leave a
+            // gap where the tail joins, making the two windows read as one shape.
+            let b = p.border;
+            cv.hline(0, width, 0, b, 1.0);
+            for y in 0..height {
+                cv.blend(0, y, b, 1.0);
+                cv.blend(width - 1, y, b, 1.0);
+            }
+            let gap = if tail { s(TAIL_W) / 2 } else { 0 };
+            let mid = width / 2;
+            cv.hline(0, mid - gap, height - 1, b, 1.0);
+            cv.hline(mid + gap, width, height - 1, b, 1.0);
         }
 
-        text(mem, &settings.format_soc(est.soc), s(PAD), s(10), fonts.big, p.text, None);
+        text(mem, &settings.format_soc(soc_display), s(PAD), s(10), fonts.big, p.text, None);
         text(mem, &flow_line(est), s(PAD), s(58), fonts.body, flow, None);
         text(
             mem,

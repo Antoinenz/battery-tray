@@ -12,7 +12,7 @@ mod settings_ui;
 use battery_core::estimator::{Estimator, HistPoint};
 use battery_core::alerts::{Alert, Alerts};
 use battery_core::settings::Settings;
-use battery_core::types::{fmt_duration, Estimates, Phase, Sample};
+use battery_core::types::{fmt_duration, Estimates, Phase, Sample, SocTrack};
 use battery_core::{seed, store};
 use battery_win::{system_uses_light_theme, BatteryInfo, Sampler};
 use icon::{phase_to_glyph, IconCache, IconSpec};
@@ -146,6 +146,13 @@ struct App {
     drag: Option<((i32, i32), (i32, i32))>,
     dragged: bool,
     alerts: Alerts,
+    /// The little triangle pointing back at the tray icon. Its own window so
+    /// the panel keeps the system's anti-aliased rounded corners; a region on
+    /// the panel itself would replace them with hard edges.
+    tail: HWND,
+    /// Last charge level shown, so the readout only ever moves the way the
+    /// battery is actually going.
+    shown_soc: Option<f64>,
 
     display_on: Arc<AtomicBool>,
     sample_interval: Arc<AtomicU32>,
@@ -162,6 +169,23 @@ fn app_from(hwnd: HWND) -> Option<&'static mut App> {
         let p = GetWindowLongPtrW(hwnd, GWLP_USERDATA) as *mut App;
         p.as_mut()
     }
+}
+
+/// The charge level to print: interpolated between gauge steps, and held
+/// monotonic in the direction the battery is actually going.
+///
+/// Dead reckoning can run slightly ahead or behind the next real reading.
+/// Letting the number tick backwards while discharging would look like a
+/// fault, so it is only ever allowed to move the way the power is flowing.
+fn displayed_soc(app: &mut App, track: &SocTrack, now_ms: i64) -> f64 {
+    let raw = track.at(now_ms);
+    let shown = match app.shown_soc {
+        Some(prev) if track.per_ms < 0.0 => raw.min(prev),
+        Some(prev) if track.per_ms > 0.0 => raw.max(prev),
+        _ => raw,
+    };
+    app.shown_soc = Some(shown);
+    shown
 }
 
 fn dpi_scale(hwnd: HWND) -> f64 {
@@ -327,6 +351,39 @@ fn add_tray(app: &mut App, hwnd: HWND) {
 
 // ---------------------------------------------------------------- panel
 
+/// Give the tail window its triangular shape and point it downward.
+unsafe fn shape_tail(tail: HWND, w: i32, h: i32) {
+    let pts = [
+        POINT { x: 0, y: 0 },
+        POINT { x: w, y: 0 },
+        POINT { x: w / 2, y: h },
+    ];
+    let rgn = CreatePolygonRgn(pts.as_ptr(), pts.len() as i32, WINDING);
+    // The window owns the region once it is set; it must not be deleted here.
+    SetWindowRgn(tail, rgn, 1);
+}
+
+/// Park the tail centred beneath the panel, or hide it when the panel is
+/// pinned and no longer points at anything.
+fn place_tail(app: &App) {
+    unsafe {
+        if !app.panel_visible || app.settings.pin_panel {
+            ShowWindow(app.tail, SW_HIDE);
+            return;
+        }
+        let mut pr = RECT { left: 0, top: 0, right: 0, bottom: 0 };
+        GetWindowRect(app.panel, &mut pr);
+        let w = (panel::TAIL_W as f64 * app.scale).round() as i32;
+        let h = (panel::TAIL_H as f64 * app.scale).round() as i32;
+        let x = (pr.left + pr.right) / 2 - w / 2;
+        // Overlap by a pixel so no seam shows between the two windows.
+        let y = pr.bottom - 1;
+        shape_tail(app.tail, w, h);
+        SetWindowPos(app.tail, HWND_TOPMOST, x, y, w, h, SWP_NOACTIVATE | SWP_SHOWWINDOW);
+        InvalidateRect(app.tail, std::ptr::null(), 1);
+    }
+}
+
 fn position_panel(app: &App) {
     unsafe {
         let w = (panel::PANEL_W as f64 * app.scale).round() as i32;
@@ -389,7 +446,7 @@ fn show_panel(app: &mut App) {
         let hist: Vec<HistPoint> = app.est.history().iter().copied().collect();
         let _ = est;
         app.panel_has_graph =
-            panel::has_graph(&hist, app.settings.graph, battery_win::now_ms());
+            panel::has_graph(&hist, &app.settings, battery_win::now_ms());
     }
     position_panel(app);
     unsafe {
@@ -402,6 +459,7 @@ fn show_panel(app: &mut App) {
     }
     app.sample_interval.store(SAMPLE_FOREGROUND_MS, Ordering::Relaxed);
     app.panel_visible = true;
+    place_tail(app);
 }
 
 fn hide_panel(app: &mut App) {
@@ -410,6 +468,7 @@ fn hide_panel(app: &mut App) {
     unsafe {
         KillTimer(app.panel, TIMER_PANEL);
         ShowWindow(app.panel, SW_HIDE);
+        ShowWindow(app.tail, SW_HIDE);
     }
     app.sample_interval.store(SAMPLE_BACKGROUND_MS, Ordering::Relaxed);
     app.panel_visible = false;
@@ -475,7 +534,7 @@ fn settings_changed(app: &mut App) {
     }
     // The graph kind changes how much history counts as enough to draw.
     let hist: Vec<HistPoint> = app.est.history().iter().copied().collect();
-    let has = panel::has_graph(&hist, app.settings.graph, battery_win::now_ms());
+    let has = panel::has_graph(&hist, &app.settings, battery_win::now_ms());
     if has != app.panel_has_graph {
         app.panel_has_graph = has;
         if app.panel_visible {
@@ -485,6 +544,7 @@ fn settings_changed(app: &mut App) {
     unsafe {
         InvalidateRect(app.panel, std::ptr::null(), 0);
     }
+    place_tail(app);
 }
 
 fn apply_action(app: &mut App, action: Action) {
@@ -524,6 +584,11 @@ fn apply_action(app: &mut App, action: Action) {
         }
         Action::ToggleAlert80 => app.settings.alert_80 = !app.settings.alert_80,
         Action::ToggleAlertFull => app.settings.alert_full = !app.settings.alert_full,
+        Action::ToggleShowGraph => app.settings.show_graph = !app.settings.show_graph,
+        Action::ToggleZeroLine => {
+            app.settings.graph_zero_line = !app.settings.graph_zero_line
+        }
+        Action::ToggleAutofit => app.settings.graph_autofit = !app.settings.graph_autofit,
         Action::SetLowLevel(v) => app.settings.alert_low_pct = v,
         Action::SetCriticalLevel(v) => app.settings.alert_critical_pct = v,
         Action::ToggleStartup => {
@@ -712,8 +777,16 @@ unsafe extern "system" fn panel_proc(hwnd: HWND, msg: u32, wp: WPARAM, lp: LPARA
                     to_full: None,
                     note: None,
                     confidence: 0.0,
+                    soc_track: SocTrack {
+                        base: 0.0,
+                        as_of_ms: 0,
+                        per_ms: 0.0,
+                        quantum: 0.0,
+                    },
                 });
                 let hist: Vec<HistPoint> = app.est.history().iter().copied().collect();
+                let now = battery_win::now_ms();
+                let soc_display = displayed_soc(app, &est.soc_track, now);
                 panel::render(
                     hdc,
                     rc.right,
@@ -723,9 +796,11 @@ unsafe extern "system" fn panel_proc(hwnd: HWND, msg: u32, wp: WPARAM, lp: LPARA
                     &est,
                     &hist,
                     &app.settings,
-                    battery_win::now_ms(),
+                    now,
                     app.tooltip_at,
                     app.settings.theme.is_light(app.light_theme),
+                    soc_display,
+                    !app.settings.pin_panel,
                 );
             }
             EndPaint(hwnd, &ps);
@@ -798,6 +873,11 @@ unsafe extern "system" fn panel_proc(hwnd: HWND, msg: u32, wp: WPARAM, lp: LPARA
         }
         WM_LBUTTONDOWN => {
             if let Some(app) = app_from(hwnd) {
+                // Only a pinned panel is movable: an anchored one belongs to
+                // the tray icon its tail points at.
+                if !app.settings.pin_panel {
+                    return 0;
+                }
                 let mut cursor = POINT { x: 0, y: 0 };
                 GetCursorPos(&mut cursor);
                 let mut wr = RECT { left: 0, top: 0, right: 0, bottom: 0 };
@@ -810,7 +890,9 @@ unsafe extern "system" fn panel_proc(hwnd: HWND, msg: u32, wp: WPARAM, lp: LPARA
         }
         WM_LBUTTONUP => {
             if let Some(app) = app_from(hwnd) {
-                ReleaseCapture();
+                if app.drag.is_some() {
+                    ReleaseCapture();
+                }
                 let dragged = app.dragged;
                 app.drag = None;
                 app.dragged = false;
@@ -820,6 +902,7 @@ unsafe extern "system" fn panel_proc(hwnd: HWND, msg: u32, wp: WPARAM, lp: LPARA
                     GetWindowRect(hwnd, &mut wr);
                     app.settings.panel_pos = Some((wr.left, wr.top));
                     let _ = store::save_settings(&app.settings);
+                    place_tail(app);
                 } else {
                     // A press that did not move is a click: toggle the graph.
                     let (x, y) = lparam_point(lp);
@@ -894,6 +977,39 @@ unsafe extern "system" fn settings_proc(hwnd: HWND, msg: u32, wp: WPARAM, lp: LP
     }
 }
 
+/// The tail is a flat triangle in the panel's background colour. Its shape
+/// comes from the window region, so painting is just a fill.
+unsafe extern "system" fn tail_proc(hwnd: HWND, msg: u32, wp: WPARAM, lp: LPARAM) -> LRESULT {
+    match msg {
+        WM_PAINT => {
+            let mut ps: PAINTSTRUCT = std::mem::zeroed();
+            let hdc = BeginPaint(hwnd, &mut ps);
+            if let Some(app) = app_from(hwnd) {
+                let light = app.settings.theme.is_light(app.light_theme);
+                let c = panel::palette(light).bg;
+                let brush = CreateSolidBrush(
+                    (c.0 as u32) | ((c.1 as u32) << 8) | ((c.2 as u32) << 16),
+                );
+                let mut rc = RECT { left: 0, top: 0, right: 0, bottom: 0 };
+                GetClientRect(hwnd, &mut rc);
+                FillRect(hdc, &rc, brush);
+                DeleteObject(brush as HGDIOBJ);
+            }
+            EndPaint(hwnd, &ps);
+            0
+        }
+        // Clicking the tail should behave like clicking the panel it belongs to.
+        WM_LBUTTONUP => {
+            if let Some(app) = app_from(hwnd) {
+                SetForegroundWindow(app.panel);
+            }
+            0
+        }
+        WM_ERASEBKGND => 1,
+        _ => DefWindowProcW(hwnd, msg, wp, lp),
+    }
+}
+
 fn taskbar_created_message() -> u32 {
     use std::sync::OnceLock;
     static MSG: OnceLock<u32> = OnceLock::new();
@@ -916,6 +1032,10 @@ fn drain_messages(app: &mut App) {
         }
     }
     let Some(est) = latest else { return };
+    // A change of direction invalidates the one-way rule.
+    if app.last.as_ref().map(|p| p.phase) != Some(est.phase) {
+        app.shown_soc = None;
+    }
     update_tray(app, &est);
     if let Some(alert) = app.alerts.evaluate(&est, &app.settings) {
         show_alert(app, alert, &est);
@@ -925,7 +1045,7 @@ fn drain_messages(app: &mut App) {
     // The window shrinks when there is no graph worth showing, rather than
     // leaving an empty band.
     let hist: Vec<HistPoint> = app.est.history().iter().copied().collect();
-    let has = panel::has_graph(&hist, app.settings.graph, battery_win::now_ms());
+    let has = panel::has_graph(&hist, &app.settings, battery_win::now_ms());
     if has != app.panel_has_graph {
         app.panel_has_graph = has;
         if app.panel_visible {
@@ -1052,6 +1172,20 @@ fn main() {
             4,
         );
 
+        let tail_class = wide("BatteryTrayTail");
+        register_class(&tail_class, Some(tail_proc), hinst, false, -1);
+        let tail_hwnd = CreateWindowExW(
+            WS_EX_TOOLWINDOW | WS_EX_TOPMOST | WS_EX_NOACTIVATE,
+            tail_class.as_ptr(),
+            wide("").as_ptr(),
+            WS_POPUP,
+            0, 0, 10, 10,
+            std::ptr::null_mut(),
+            std::ptr::null_mut(),
+            hinst,
+            std::ptr::null(),
+        );
+
         let settings_hwnd = CreateWindowExW(
             0,
             settings_class.as_ptr(),
@@ -1098,6 +1232,8 @@ fn main() {
             drag: None,
             dragged: false,
             alerts: Alerts::default(),
+            tail: tail_hwnd,
+            shown_soc: None,
             display_on: display_on.clone(),
             sample_interval: sample_interval.clone(),
             rx,
@@ -1108,7 +1244,7 @@ fn main() {
             seeded_result: Arc::new(std::sync::Mutex::new(None)),
         });
         let app_ptr = Box::into_raw(app);
-        for w in [hwnd, panel_hwnd, settings_hwnd] {
+        for w in [hwnd, panel_hwnd, settings_hwnd, tail_hwnd] {
             SetWindowLongPtrW(w, GWLP_USERDATA, app_ptr as isize);
         }
         let app = &mut *app_ptr;

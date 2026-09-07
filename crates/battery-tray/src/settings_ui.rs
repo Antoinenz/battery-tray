@@ -21,7 +21,7 @@ const SS_RIGHT: u32 = 0x0002;
 
 /// Client size in logical pixels.
 pub const WIN_W: i32 = 400;
-pub const WIN_H: i32 = 448;
+pub const WIN_H: i32 = 512;
 
 pub const ID_CHK_STARTUP: u16 = 100;
 pub const ID_CHK_DECIMALS: u16 = 101;
@@ -36,6 +36,9 @@ pub const ID_CHK_ALERT_80: u16 = 152;
 pub const ID_CHK_ALERT_FULL: u16 = 153;
 pub const ID_CBO_LOW: u16 = 160;
 pub const ID_CBO_CRITICAL: u16 = 161;
+pub const ID_CHK_SHOW_GRAPH: u16 = 170;
+pub const ID_CHK_ZERO_LINE: u16 = 171;
+pub const ID_CHK_AUTOFIT: u16 = 172;
 
 const TABS: [&str; 5] = ["General", "Display", "Alerts", "Battery", "Learning"];
 
@@ -69,6 +72,9 @@ pub enum Action {
     ToggleAlertFull,
     SetLowLevel(u8),
     SetCriticalLevel(u8),
+    ToggleShowGraph,
+    ToggleZeroLine,
+    ToggleAutofit,
     ResetLearned,
 }
 
@@ -152,6 +158,9 @@ pub struct SettingsWindow {
     chk_alert_critical: HWND,
     chk_alert_80: HWND,
     chk_alert_full: HWND,
+    chk_show_graph: HWND,
+    chk_zero_line: HWND,
+    chk_autofit: HWND,
     cbo_low: HWND,
     cbo_critical: HWND,
     battery_values: Vec<HWND>,
@@ -348,7 +357,7 @@ impl SettingsWindow {
             display.push(r);
         }
         let gy = cy - 8 + tray_h + 12;
-        let graph_h = 26 + GraphKind::ALL.len() as i32 * 24;
+        let graph_h = 26 + GraphKind::ALL.len() as i32 * 24 + 3 * 26;
         display.push(b.group("Graph", cx - 8, gy, wide_w, graph_h));
         let mut graph_radios = Vec::new();
         for (i, g) in GraphKind::ALL.iter().enumerate() {
@@ -356,6 +365,16 @@ impl SettingsWindow {
             graph_radios.push(r);
             display.push(r);
         }
+        let chk_show_graph = b.checkbox("Show the graph", cx + 6, gy + 72, 300, ID_CHK_SHOW_GRAPH);
+        let chk_zero_line =
+            b.checkbox("Show the zero line", cx + 6, gy + 98, 300, ID_CHK_ZERO_LINE);
+        let chk_autofit = b.checkbox(
+            "Fit to one direction when nothing opposes it",
+            cx + 6, gy + 124, 300, ID_CHK_AUTOFIT,
+        );
+        display.push(chk_show_graph);
+        display.push(chk_zero_line);
+        display.push(chk_autofit);
         let ty = gy + graph_h + 12;
         let theme_h = 26 + PanelTheme::ALL.len() as i32 * 24;
         display.push(b.group("Panel theme", cx - 8, ty, wide_w, theme_h));
@@ -431,6 +450,9 @@ impl SettingsWindow {
             chk_alert_critical,
             chk_alert_80,
             chk_alert_full,
+            chk_show_graph,
+            chk_zero_line,
+            chk_autofit,
             cbo_low,
             cbo_critical,
             battery_values,
@@ -468,6 +490,9 @@ impl SettingsWindow {
             ID_CHK_ALERT_CRITICAL => Some(Action::ToggleAlertCritical),
             ID_CHK_ALERT_80 => Some(Action::ToggleAlert80),
             ID_CHK_ALERT_FULL => Some(Action::ToggleAlertFull),
+            ID_CHK_SHOW_GRAPH => Some(Action::ToggleShowGraph),
+            ID_CHK_ZERO_LINE => Some(Action::ToggleZeroLine),
+            ID_CHK_AUTOFIT => Some(Action::ToggleAutofit),
             ID_BTN_RESET => Some(Action::ResetLearned),
             _ => {
                 if (ID_TRAY_BASE..ID_TRAY_BASE + TrayMode::ALL.len() as u16).contains(&id) {
@@ -518,6 +543,9 @@ impl SettingsWindow {
             check(self.chk_alert_critical, s.alert_critical);
             check(self.chk_alert_80, s.alert_80);
             check(self.chk_alert_full, s.alert_full);
+            check(self.chk_show_graph, s.show_graph);
+            check(self.chk_zero_line, s.graph_zero_line);
+            check(self.chk_autofit, s.graph_autofit);
             for (i, m) in TrayMode::ALL.iter().enumerate() {
                 check(self.tray_radios[i], s.tray_mode == *m);
             }
@@ -537,6 +565,13 @@ impl SettingsWindow {
             // A disabled alert has no level to pick.
             EnableWindow(self.cbo_low, i32::from(s.alert_low));
             EnableWindow(self.cbo_critical, i32::from(s.alert_critical));
+            // Nothing under the graph matters when there is no graph.
+            for h in [self.chk_zero_line, self.chk_autofit] {
+                EnableWindow(h, i32::from(s.show_graph));
+            }
+            for h in self.graph_radios.iter() {
+                EnableWindow(*h, i32::from(s.show_graph));
+            }
         }
     }
 

@@ -110,6 +110,33 @@ pub struct Prediction {
     pub hi: f64,
 }
 
+/// Everything needed to show a charge level that moves smoothly.
+///
+/// The gauge only reports whole 10 mWh steps -- about 0.026% on a 39 Wh
+/// pack -- so a two-decimal readout taken straight from it lurches. These
+/// fields let the display dead-reckon between steps from the measured
+/// power flow, which is exactly the quantity that says how fast the true
+/// value is moving.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct SocTrack {
+    /// Charge level at the moment the gauge last changed.
+    pub base: f64,
+    pub as_of_ms: i64,
+    /// Signed change in charge level per millisecond.
+    pub per_ms: f64,
+    /// One gauge step, in charge-level units. Drift is never allowed to
+    /// exceed this: past it the reading itself would have moved.
+    pub quantum: f64,
+}
+
+impl SocTrack {
+    pub fn at(&self, now_ms: i64) -> f64 {
+        let dt = (now_ms - self.as_of_ms).max(0) as f64;
+        let drift = (self.per_ms * dt).clamp(-self.quantum, self.quantum);
+        (self.base + drift).clamp(0.0, 1.0)
+    }
+}
+
 #[derive(Clone, Debug, PartialEq)]
 pub struct Estimates {
     pub phase: Phase,
@@ -125,6 +152,8 @@ pub struct Estimates {
     pub note: Option<String>,
     /// 0..1, from the app's own rolling prediction error.
     pub confidence: f64,
+    /// Lets the caller interpolate the charge level between gauge steps.
+    pub soc_track: SocTrack,
 }
 
 impl Estimates {
