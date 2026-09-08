@@ -55,6 +55,17 @@ Replays a recorded trace and reports end-to-end error against a naive
 `remaining ÷ current rate` baseline. See [prediction.md](prediction.md) for the
 numbers this produces.
 
+## Artwork
+
+Every glyph — the tray icons, the app icon, the `.ico` embedded in the exe —
+is rasterised at runtime from `battery_core::glyph`, so there is one definition
+of what the app looks like and no asset that can drift from it. See
+[drawing.md](drawing.md).
+
+The one committed image is `assets/logo.png`, for the README, since GitHub
+cannot run the build script. It is `glyph::app_icon_rgba(256)` saved as a PNG.
+If the mark ever changes, that file needs regenerating; nothing checks.
+
 ## Files on disk
 
 State lives in `%LOCALAPPDATA%\BatteryTray\`:
