@@ -405,14 +405,16 @@ fn draw_chart(
         }
     }
 
-    // How the area under the curve falls away. With a zero line to land on, the
-    // wash stays tight to the curve and keeps a floor so it reads as filled all
-    // the way down. Without one there is nothing to land on, so it reaches much
-    // further and dissolves to nothing instead of stopping at a hard edge.
+    // How the area under the curve falls away. Deliberately faint: the line is
+    // the reading, and the wash is only there to say which side of it is
+    // filled. With a zero line to land on it stays tight to the curve and
+    // keeps a floor so the area reads as filled all the way down. Without one
+    // there is nothing to land on, so it reaches much further and dissolves to
+    // nothing instead of stopping at a hard edge.
     let (peak_a, floor_a, falloff) = if zero_visible {
-        (0.30, 0.05, 1.5)
+        (0.16, 0.02, 1.6)
     } else {
-        (0.34, 0.0, 0.55)
+        (0.18, 0.0, 0.6)
     };
 
     for (i, v) in vals.iter().enumerate() {
@@ -718,6 +720,10 @@ mod tests {
 
     const W: i32 = 200;
     const H: i32 = 60;
+    /// How far a pixel must sit from the background to count as chart. Low,
+    /// because the wash under the curve is deliberately faint and its outer
+    /// edge is what these tests measure.
+    const INK: i32 = 8;
 
     fn estimates(watts: f64) -> Estimates {
         Estimates {
@@ -773,7 +779,7 @@ mod tests {
                 (px[o] as i32 - p.bg.2 as i32).abs()
                     + (px[o + 1] as i32 - p.bg.1 as i32).abs()
                     + (px[o + 2] as i32 - p.bg.0 as i32).abs()
-                    > 24
+                    > INK
             });
             if inked {
                 rows.push(y as f64 / H as f64);
@@ -789,7 +795,7 @@ mod tests {
             (px[o] as i32 - p.bg.2 as i32).abs()
                 + (px[o + 1] as i32 - p.bg.1 as i32).abs()
                 + (px[o + 2] as i32 - p.bg.0 as i32).abs()
-                > 24
+                > INK
         })
     }
 
