@@ -2,7 +2,7 @@
 
 <img src="assets/logo.png" width="112" height="112" alt="BatteryTray logo" />
 
-# BatteryTray
+# battery tray app
 
 **A lightweight Windows tray app that predicts how long your battery will actually last. Built in Rust, with no runtime and no installer.**
 
