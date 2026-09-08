@@ -335,15 +335,18 @@ fn add_tray(app: &mut App, hwnd: HWND) {
 // ---------------------------------------------------------------- panel
 
 /// Give the tail window its triangular shape and point it downward.
-unsafe fn shape_tail(tail: HWND, w: i32, h: i32) {
+unsafe fn tail_region(w: i32, h: i32) -> HRGN {
     let pts = [
         POINT { x: 0, y: 0 },
         POINT { x: w, y: 0 },
         POINT { x: w / 2, y: h },
     ];
-    let rgn = CreatePolygonRgn(pts.as_ptr(), pts.len() as i32, WINDING);
+    CreatePolygonRgn(pts.as_ptr(), pts.len() as i32, WINDING)
+}
+
+unsafe fn shape_tail(tail: HWND, w: i32, h: i32) {
     // The window owns the region once it is set; it must not be deleted here.
-    SetWindowRgn(tail, rgn, 1);
+    SetWindowRgn(tail, tail_region(w, h), 1);
 }
 
 /// Park the tail centred beneath the panel, or hide it when the panel is
@@ -982,14 +985,32 @@ unsafe extern "system" fn tail_proc(hwnd: HWND, msg: u32, wp: WPARAM, lp: LPARAM
             let hdc = BeginPaint(hwnd, &mut ps);
             if let Some(app) = app_from(hwnd) {
                 let light = app.settings.theme.is_light(app.light_theme);
-                let c = panel::palette(light).bg;
-                let brush = CreateSolidBrush(
-                    (c.0 as u32) | ((c.1 as u32) << 8) | ((c.2 as u32) << 16),
-                );
+                let p = panel::palette(light);
+                let solid = |c: panel::Rgb| {
+                    CreateSolidBrush((c.0 as u32) | ((c.1 as u32) << 8) | ((c.2 as u32) << 16))
+                };
+                let bg = solid(p.bg);
+                let border = solid(p.border);
                 let mut rc = RECT { left: 0, top: 0, right: 0, bottom: 0 };
                 GetClientRect(hwnd, &mut rc);
-                FillRect(hdc, &rc, brush);
-                DeleteObject(brush as HGDIOBJ);
+                FillRect(hdc, &rc, bg);
+
+                // The tail carries the panel's outline down its two slanted
+                // sides. Framing the region itself rather than drawing lines
+                // alongside it means the border follows the silhouette exactly,
+                // however the polygon happens to be rasterised.
+                let rgn = tail_region(rc.right, rc.bottom);
+                FrameRgn(hdc, rgn, border, 1, 1);
+                DeleteObject(rgn as HGDIOBJ);
+
+                // The top is where the tail opens into the panel, so it carries
+                // no line -- only the two corner pixels, which continue the
+                // panel's bottom border from where it stopped either side.
+                let mouth = RECT { left: 1, top: 0, right: rc.right - 1, bottom: 1 };
+                FillRect(hdc, &mouth, bg);
+
+                DeleteObject(bg as HGDIOBJ);
+                DeleteObject(border as HGDIOBJ);
             }
             EndPaint(hwnd, &ps);
             0

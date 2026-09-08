@@ -201,13 +201,30 @@ pub fn time_row_rect(scale: f64) -> RECT {
 // ------------------------------------------------------------------- graph
 
 /// Resample history to one value per pixel column, averaging within a column.
-fn columns(hist: &[HistPoint], kind: GraphKind, now_ms: i64, cols: i32) -> Vec<Option<f64>> {
+///
+/// `live` is the reading as it stands now, when there is one. History is only
+/// written every half minute, so without it the newest columns are empty and
+/// the curve stops short of the right edge -- by a hair on the hour-long
+/// throughput plot, and visibly on the day-long one. It is the same value the
+/// header shows, not an extrapolation: the present is known, it just has not
+/// been recorded yet.
+fn columns(
+    hist: &[HistPoint],
+    live: Option<HistPoint>,
+    kind: GraphKind,
+    now_ms: i64,
+    cols: i32,
+) -> Vec<Option<f64>> {
     let span = kind.span_ms();
     let start = now_ms - span;
     let n = cols.max(1) as usize;
     let mut sum = vec![0.0f64; n];
     let mut count = vec![0u32; n];
-    for p in hist.iter().filter(|p| p.t_ms >= start && p.t_ms <= now_ms) {
+    for p in hist
+        .iter()
+        .chain(live.iter())
+        .filter(|p| p.t_ms >= start && p.t_ms <= now_ms)
+    {
         let f = (p.t_ms - start) as f64 / span as f64;
         let i = ((f * (cols - 1) as f64).round() as i64).clamp(0, cols as i64 - 1) as usize;
         let v = match kind {
@@ -302,7 +319,15 @@ fn draw_chart(
     if w < 8 || h < 8 {
         return;
     }
-    let Some(vals) = densify_and_smooth(&columns(hist, kind, now_ms, w), 2.2) else {
+    // Before the first sample lands there is no reading to carry forward --
+    // only a placeholder of zero watts at zero percent, which drawn as if it
+    // were real yanks the curve to the floor at the right edge.
+    let live = (est.phase != Phase::Unknown).then(|| HistPoint {
+        t_ms: now_ms,
+        watts: est.watts as f32,
+        soc: est.soc as f32,
+    });
+    let Some(vals) = densify_and_smooth(&columns(hist, live, kind, now_ms, w), 2.2) else {
         return;
     };
 
@@ -694,13 +719,13 @@ mod tests {
     const W: i32 = 200;
     const H: i32 = 60;
 
-    fn estimates() -> Estimates {
+    fn estimates(watts: f64) -> Estimates {
         Estimates {
-            phase: Phase::Discharging,
+            phase: if watts < 0.0 { Phase::Discharging } else { Phase::Charging },
             soc: 0.7,
             capacity_mwh: 27_000,
             full_mwh: 39_000,
-            watts: -12.0,
+            watts,
             to_empty: None,
             to_80: None,
             to_full: None,
@@ -722,15 +747,18 @@ mod tests {
 
     /// Draw a throughput chart and hand back the pixels.
     fn render(h: &[HistPoint], autofit: bool, zero_line: bool) -> Vec<u8> {
+        render_at(h, h.last().unwrap().t_ms, autofit, zero_line)
+    }
+
+    fn render_at(h: &[HistPoint], now_ms: i64, autofit: bool, zero_line: bool) -> Vec<u8> {
         let mut px = vec![0u8; (W * H * 4) as usize];
         let p = palette(false);
         let mut cv = Canvas { px: &mut px, w: W, h: H };
         cv.fill(p.bg);
         let r = RECT { left: 0, top: 0, right: W, bottom: H };
-        // now_ms must match the history's end for the whole hour to be in view.
-        let now_ms = h.last().unwrap().t_ms;
+        let est = estimates(h.last().unwrap().watts as f64);
         draw_chart(
-            &mut cv, r, h, GraphKind::Throughput, now_ms, &estimates(), 1, &p, zero_line, autofit,
+            &mut cv, r, h, GraphKind::Throughput, now_ms, &est, 1, &p, zero_line, autofit,
         );
         px
     }
@@ -752,6 +780,52 @@ mod tests {
             }
         }
         rows
+    }
+
+    /// Is any pixel of this column part of the chart?
+    fn column_inked(px: &[u8], x: i32, p: &Palette) -> bool {
+        (0..H).any(|y| {
+            let o = ((y * W + x) * 4) as usize;
+            (px[o] as i32 - p.bg.2 as i32).abs()
+                + (px[o + 1] as i32 - p.bg.1 as i32).abs()
+                + (px[o + 2] as i32 - p.bg.0 as i32).abs()
+                > 24
+        })
+    }
+
+    #[test]
+    fn the_curve_reaches_the_right_edge_between_history_writes() {
+        // History is written every half minute but the panel repaints several
+        // times a second, so the newest recorded point is almost always in the
+        // past. The live reading has to carry the curve the rest of the way.
+        let h = hist(-30_000, |i| -8.0 - (i % 5) as f32);
+        let px = render_at(&h, 0, true, true);
+        let p = palette(false);
+        assert!(
+            column_inked(&px, W - 1, &p),
+            "the last column should be drawn"
+        );
+    }
+
+    #[test]
+    fn a_placeholder_estimate_is_not_drawn_as_a_reading() {
+        // Still measuring: no phase, no watts, no charge. The curve should
+        // stop where the history does rather than dive to zero.
+        let h = hist(-30_000, |_| -10.0);
+        let mut px = vec![0u8; (W * H * 4) as usize];
+        let p = palette(false);
+        let mut cv = Canvas { px: &mut px, w: W, h: H };
+        cv.fill(p.bg);
+        let mut est = estimates(-10.0);
+        est.phase = Phase::Unknown;
+        est.watts = 0.0;
+        est.soc = 0.0;
+        let r = RECT { left: 0, top: 0, right: W, bottom: H };
+        draw_chart(&mut cv, r, &h, GraphKind::Throughput, 0, &est, 1, &p, true, true);
+        assert!(
+            !column_inked(&px, W - 1, &p),
+            "a placeholder should not extend the curve"
+        );
     }
 
     #[test]
