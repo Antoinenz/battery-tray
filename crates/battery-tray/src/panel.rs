@@ -317,6 +317,13 @@ fn draw_chart(
     // True when the plot has been given over to a single direction, in which
     // case zero sits at an edge and a line along it would say nothing.
     let mut collapsed = false;
+    // True when a collapsed plot is showing drain on its own. Drain is
+    // negative, so plotted as it stands the curve hangs from the top edge --
+    // which only reads correctly against a zero line, and a collapsed plot no
+    // longer has one. Flipped, it reads the way any single-quantity chart
+    // does: more draw, taller. It goes back the other way up the moment
+    // charge reappears and the zero line returns to give the sign meaning.
+    let mut flip = false;
     let base_value = match kind {
         GraphKind::Throughput => {
             let up = hi.max(0.0);
@@ -327,12 +334,12 @@ fn draw_chart(
                 // plot to that direction rather than holding half of it empty
                 // for a sign that never appeared.
                 collapsed = true;
+                lo = 0.0;
                 if up >= down {
-                    lo = 0.0;
                     hi = up * 1.15;
                 } else {
-                    lo = -down * 1.15;
-                    hi = 0.0;
+                    flip = true;
+                    hi = down * 1.15;
                 }
             } else {
                 // Centred on zero so charge and drain read as opposite directions.
@@ -391,7 +398,9 @@ fn draw_chart(
         if fade <= 0.0 {
             continue;
         }
-        let y = to_y(v);
+        // A flipped plot shows the magnitude; the colour below still comes
+        // from the direction the energy actually went.
+        let y = to_y(if flip { -v } else { v });
         // Throughput is coloured by direction: into the battery is green,
         // out of it is red, split at the zero line.
         let col = match kind {
@@ -674,5 +683,137 @@ pub fn render(
         SelectObject(mem, old);
         DeleteObject(dib as HGDIOBJ);
         DeleteDC(mem);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use battery_core::types::SocTrack;
+
+    const W: i32 = 200;
+    const H: i32 = 60;
+
+    fn estimates() -> Estimates {
+        Estimates {
+            phase: Phase::Discharging,
+            soc: 0.7,
+            capacity_mwh: 27_000,
+            full_mwh: 39_000,
+            watts: -12.0,
+            to_empty: None,
+            to_80: None,
+            to_full: None,
+            note: None,
+            confidence: 0.8,
+            soc_track: SocTrack { base: 0.7, as_of_ms: 0, per_ms: 0.0, quantum: 0.001 },
+        }
+    }
+
+    /// An hour of readings, `watts` sampled once a minute.
+    fn hist(now_ms: i64, watts: impl Fn(i64) -> f32) -> Vec<HistPoint> {
+        (0..60)
+            .map(|i| {
+                let t_ms = now_ms - (59 - i) * 60_000;
+                HistPoint { t_ms, watts: watts(i), soc: 0.7 }
+            })
+            .collect()
+    }
+
+    /// Draw a throughput chart and hand back the pixels.
+    fn render(h: &[HistPoint], autofit: bool, zero_line: bool) -> Vec<u8> {
+        let mut px = vec![0u8; (W * H * 4) as usize];
+        let p = palette(false);
+        let mut cv = Canvas { px: &mut px, w: W, h: H };
+        cv.fill(p.bg);
+        let r = RECT { left: 0, top: 0, right: W, bottom: H };
+        // now_ms must match the history's end for the whole hour to be in view.
+        let now_ms = h.last().unwrap().t_ms;
+        draw_chart(
+            &mut cv, r, h, GraphKind::Throughput, now_ms, &estimates(), 1, &p, zero_line, autofit,
+        );
+        px
+    }
+
+    /// Rows carrying ink, as a fraction of the plot height. 0 is the top.
+    fn ink_rows(px: &[u8], p: &Palette) -> Vec<f64> {
+        let mut rows = Vec::new();
+        for y in 0..H {
+            let inked = (0..W).any(|x| {
+                let o = ((y * W + x) * 4) as usize;
+                // The background is uniform, so anything else is the chart.
+                (px[o] as i32 - p.bg.2 as i32).abs()
+                    + (px[o + 1] as i32 - p.bg.1 as i32).abs()
+                    + (px[o + 2] as i32 - p.bg.0 as i32).abs()
+                    > 24
+            });
+            if inked {
+                rows.push(y as f64 / H as f64);
+            }
+        }
+        rows
+    }
+
+    #[test]
+    fn a_drain_only_plot_is_drawn_the_right_way_up() {
+        let h = hist(0, |i| -8.0 - (i % 5) as f32);
+        let px = render(&h, true, true);
+        let p = palette(false);
+        let rows = ink_rows(&px, &p);
+        assert!(!rows.is_empty(), "nothing was drawn");
+        // With the whole plot given to drain, the curve rises from the bottom:
+        // the deepest ink is at the floor and the peak stays off the ceiling.
+        assert!(
+            *rows.last().unwrap() > 0.9,
+            "the fill should reach the bottom, lowest ink at {:.2}",
+            rows.last().unwrap()
+        );
+        assert!(
+            rows[0] > 0.05,
+            "the curve should not hang from the top, highest ink at {:.2}",
+            rows[0]
+        );
+    }
+
+    #[test]
+    fn drain_goes_back_below_the_line_once_charge_returns() {
+        // The same drain, but with charging in the second half, so the plot
+        // keeps both directions and its zero line.
+        let h = hist(0, |i| if i < 30 { -8.0 - (i % 5) as f32 } else { 20.0 });
+        let px = render(&h, true, true);
+
+        // Red is the drain half. Centred on zero, it must sit below the middle.
+        let mut red_rows = Vec::new();
+        for y in 0..H {
+            for x in 0..W {
+                let o = ((y * W + x) * 4) as usize;
+                let (b, g, r) = (px[o] as i32, px[o + 1] as i32, px[o + 2] as i32);
+                if r > g + 40 && r > b + 40 {
+                    red_rows.push(y as f64 / H as f64);
+                    break;
+                }
+            }
+        }
+        assert!(!red_rows.is_empty(), "no drain drawn");
+        assert!(
+            red_rows[0] > 0.45,
+            "drain should stay below the zero line, highest red at {:.2}",
+            red_rows[0]
+        );
+    }
+
+    #[test]
+    fn autofit_off_keeps_drain_below_the_line_even_when_it_is_alone() {
+        let h = hist(0, |i| -8.0 - (i % 5) as f32);
+        let px = render(&h, false, true);
+        let p = palette(false);
+        let rows = ink_rows(&px, &p);
+        assert!(!rows.is_empty(), "nothing was drawn");
+        // Zero stays in the middle, so drain occupies the lower half only.
+        assert!(
+            rows[0] > 0.45,
+            "highest ink should be at or below centre, got {:.2}",
+            rows[0]
+        );
     }
 }

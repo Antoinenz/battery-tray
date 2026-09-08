@@ -201,8 +201,11 @@ split at the zero line.
 When every reading in the window flows the same way — nothing has been plugged
 in for an hour, say — the plot is handed entirely to that direction and the
 zero line is dropped, rather than holding half the height empty for a sign that
-never appears. Both that and the zero line can be turned off, as can the graph
-itself.
+never appears. Drain is negative, so on its own it would hang from the top
+edge; with no zero line left to give the sign meaning it is flipped instead,
+and reads the way any single-quantity chart does — more draw, taller. It goes
+back below the line the moment charge reappears. Both that and the zero line
+can be turned off, as can the graph itself.
 
 The wash under the curve fades with distance from it. With a zero line to land
 on it stays tight and keeps a floor, so the area reads as filled all the way
