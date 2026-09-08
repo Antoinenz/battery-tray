@@ -6,7 +6,7 @@ how *your* machine behaves — so the estimate gets better the longer you run it
 instead of being a nameplate figure divided by a guess.
 
 <p align="center">
-  <img src="docs/screenshots/panel.png" alt="The panel, showing 96.48%, 26.2 W out and 3h 38m remaining" width="464">
+  <img src="docs/screenshots/tray-time-remaining.png" alt="The panel open above the taskbar, showing 98.49%, 7.8 W out and 3h 22m remaining" width="467">
 </p>
 
 Left-click the tray icon for the panel. That is the whole interface.
@@ -137,21 +137,17 @@ tray icon, panel, settings, message loop. No WMI, no COM, no runtime.
 <details>
 <summary>Click to expand</summary>
 
-**Fully charged**
+**Fully charged, with each kind of graph**
 
-<img src="docs/screenshots/charged.png" alt="Panel showing 98.57% and Fully charged" width="460">
+<img src="docs/screenshots/charged-throughput-graph.png" alt="Panel showing 98.57%, fully charged, with the throughput graph" width="460">
 
-<img src="docs/screenshots/charged-level-graph.png" alt="Panel showing 98.66% with a longer stretch of history" width="460">
+<img src="docs/screenshots/charged-level-graph.png" alt="Panel showing 98.66%, fully charged, with the battery-level graph" width="460">
 
-**Discharging, with time remaining in the tray icon**
+**Discharging**
 
-<img src="docs/screenshots/tray-time-remaining.png" alt="Panel showing 7.8 W out and 3h 22m, with the time stacked in the tray icon" width="460">
+<img src="docs/screenshots/tray-throughput-graph.png" alt="Panel showing 91.99%, 18.6 W out and 2h 21m, the graph turning red as draw begins" width="403">
 
-**The panel close up**
-
-<img src="docs/screenshots/panel-close.png" alt="Close view of the panel showing 25.7 W out" width="403">
-
-<img src="docs/screenshots/panel-direction.png" alt="Close view of the panel with the graph turning red as draw begins" width="403">
+<img src="docs/screenshots/panel-close.png" alt="Close view of the panel showing 25.7 W out and 3h 49m" width="403">
 
 **Battery health**
 
