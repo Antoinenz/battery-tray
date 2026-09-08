@@ -34,5 +34,4 @@ features = [
   "Win32_System_Power",
   "Win32_System_Registry",
   "Win32_System_SystemInformation",
-  "Win32_System_Com",
 ]

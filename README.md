@@ -1,258 +1,167 @@
 # BatteryTray
 
-A lightweight Windows tray app that predicts battery time to empty, to 80% while
-charging, and to full — and shows the watts actually entering or leaving the
-battery.
+A small Windows tray app that tells you how long your battery will actually
+last. It reads the watts genuinely entering or leaving the battery, and learns
+how *your* machine behaves — so the estimate gets better the longer you run it,
+instead of being a nameplate figure divided by a guess.
 
-Runs as `battery-tray.exe`; settings and learned data live in
-`%LOCALAPPDATA%\BatteryTray`.
+<p align="center">
+  <img src="docs/screenshots/panel.png" alt="The panel, showing 96.48%, 26.2 W out and 3h 38m remaining" width="464">
+</p>
 
-```
- ┌─────────────────────────────┐
- │ 94.53%                      │
- │ 6.6 W  in      36.7/38.8 Wh │
- │ ─────────────────────────── │
- │ Until full              16m │
- │      ╭───╮       ╭───────── │  green above zero
- │ ─────╯   ╰─╮ ╭───╯          │  red below
- │            ╰─╯              │
- └─────────────────────────────┘
-```
+Left-click the tray icon for the panel. That is the whole interface.
 
-## Running it
+## Features
+
+- **Time to empty, to 80%, and to full** — one number at a time, whichever is
+  the one that matters right now.
+- **Real watts in and out**, measured by the battery itself rather than
+  inferred from CPU usage.
+- **A live graph** of charge level or power throughput, scrolling continuously,
+  coloured by direction — green in, red out.
+- **It says how sure it is.** Hover the time row for the uncertainty range and
+  a confidence word, both earned from grading its own past predictions.
+- **Battery health** — full-charge versus design capacity, cycle count,
+  chemistry.
+- **Five tray icon styles** — battery preview, percentage, wattage, time
+  remaining, or just the logo.
+- **Optional alerts** at low and critical charge, at 80%, and at full.
+- **Light and dark**, following Windows or pinned either way.
+- **Tiny.** ~2.5 MB of RAM, a rounding error of CPU, one ~530 KB exe, no
+  installer and no runtime to install.
+
+<p align="center">
+  <img src="docs/screenshots/confidence.png" alt="Hovering the time row shows a range of 2h 10m to 6h 32m, and 'Still learning'" width="463">
+</p>
+
+## Install
 
 Download `battery-tray.exe` from the
 [latest release](https://github.com/Antoinenz/battery-tray/releases/latest) and
-run it; there is nothing to install. Or build it:
+run it. There is nothing to install and nothing to configure — it starts
+predicting immediately, using Windows' own battery history for the first few
+hours until it has gathered its own.
 
-```sh
-cargo build --release
-./target/release/battery-tray.exe
-```
+Turn on **Start with Windows** in Settings if you want it back after a reboot.
 
-**Left-click** the tray icon to open the panel; click it again to close it.
-Clicking any other window closes it too. **Right-click** for Settings and Quit;
-everything else lives in Settings. Resting the pointer on the time row for a
-moment shows the uncertainty range and confidence beside the cursor; any
-movement dismisses it. Clicking the graph switches between its two kinds.
+To uninstall: quit it and delete the exe. Its settings and learned data live in
+`%LOCALAPPDATA%\BatteryTray`, which you can delete too.
 
-Flags: `--show-panel` and `--settings` open those directly.
-Set `BATTERY_TRAY_LOG=1` to append a trace of tray and activation events to
-`%LOCALAPPDATA%\BatteryTray\trace.log` — tray flyout dismissal depends on the
-interleaving of activation and tray-callback messages, which is far easier to
-observe than to reason about.
+## Using it
 
-## Settings
-
-A plain tabbed window built from standard Windows controls.
-
-| Tab | Contents |
+| | |
 |---|---|
-| General | Start with Windows · decimal places · keep the panel open |
-| Display | Tray icon: battery preview / percentage / wattage / time / logo. Graph: kind, whether to show it at all, the zero line, and single-direction fitting. Panel theme: follow system / dark / light |
-| Alerts | Low and critical warnings with their levels, plus optional 80% and fully-charged notifications |
-| Battery | Full-charge vs design capacity, health, charge cycles, chemistry |
-| Learning | What the model has learned, and Reset learned data |
-| About | Version and build kind, what the app runs as, where its data lives, licence, and a link to the project |
+| **Left-click** the tray icon | Open the panel — click again to close |
+| **Right-click** it | Settings and Quit |
+| **Hover** the time row | Uncertainty range and confidence |
+| **Click** the graph | Switch between charge level and throughput |
 
-A pinned panel stays put until dismissed and can be dragged anywhere on the
-screen; it reopens where it was left. An unpinned one is anchored to the tray
-icon, grows a small callout tail pointing back at it, and cannot be dragged —
-it belongs to the icon it came from. Alerts latch when they fire and only rearm
-once the charge has clearly moved away from the threshold, so a battery resting
-on the warning level cannot produce a stream of them.
+The panel closes when you click anything else, unless you pin it in Settings —
+pinned, it stays until dismissed and can be dragged anywhere on screen.
 
-The settings window is deliberately not custom-drawn. The panel has to be — it
-is a chart — but settings are a form, and real `BUTTON`, `STATIC` and
-`SysTabControl32` controls inherit theming, keyboard navigation, focus rings,
-high-contrast modes and screen-reader support for free.
+<p align="center">
+  <img src="docs/screenshots/settings-display.png" alt="The Display tab of the settings window" width="420">
+</p>
 
-The charge gauge only reports whole 10 mWh steps — about 0.026% on this pack —
-so a two-decimal readout taken straight from it lurches. The panel carries its
-own value instead, moving it at a velocity that itself eases toward the measured
-one, so the counter accelerates and decelerates with load rather than switching
-between speeds. That value is pulled gently back toward the reading, which keeps
-it honest without the correction ever showing as a jump, is bounded to within
-one and a half gauge steps of it, and is never allowed to move against the
-direction the battery is going.
+## How it learns your battery
 
-Dead reckoning alone was not enough: the rate it integrates comes from a filter
-that steps whenever a sample lands, so the figure changed pace visibly, and it
-stalled whenever drift hit the step bound. `SocDisplay` is tested against a
-simulated quantising gauge and holds every increment within 15% of the mean.
+Most battery estimates are `charge remaining ÷ current draw`. That is wrong in
+both directions, and this app avoids it in two different ways.
 
-Percentages in the *tray* stay whole even with decimals enabled. Legibility at
-20 px is set by how many glyphs must fit, so time is stacked as two lines —
-hours over minutes, like a clock — rather than squeezed into `2:45`, and the
-finer percentage reading lives in the panel where there is room for it.
+**Discharging**, the draw you are pulling right now is a poor guide to the next
+three hours, because you will not keep doing what you are doing. So expected
+draw is blended across three horizons — this instant, the last hour, and how
+this machine normally behaves in this context — and the time remaining is
+solved by integrating that forward, not by dividing.
 
-## Releases
+**Charging** is the more interesting half, because charging is not linear.
 
-There are two kinds of build, and the About tab says which one you have.
+A lithium cell charges at constant current until it approaches full, then
+switches to constant voltage, and the power going in collapses. The last 20%
+can take as long as the first 60%. Any predictor that assumes a steady rate
+will promise you a full battery long before you get one.
 
-A **release** build is made from a tag by
-[the workflow](.github/workflows/release.yml) and names itself after that tag,
-so `v1.2.0` shows as `v1.2.0`. A **development** build is anything else -- a
-local `cargo build` -- and names itself after the commit it came from, as in
-`0.1.0-dev (bf7cff7)`. That way a binary someone sends you can be traced back
-to the source it was built from, which a bare crate version shared by every
-local build cannot do.
+So the app learns the shape of your charger and your cell, stored as two
+separate things:
 
-Cutting a release is pushing a tag:
+- **The shape** — 20 buckets of 5% charge each, holding the rate at that level
+  as a fraction of the peak. This is *how your taper falls away*. The textbook
+  says it begins at 80%; on the machine this was built on it begins nearer 60%,
+  which is exactly why it is measured rather than assumed.
+- **The peak** — what your charger actually delivers, in watts. This is *how
+  fast*.
 
-```sh
-git tag v1.2.0 && git push origin v1.2.0
-```
+Keeping them apart is what makes swapping chargers safe. Plug in a weaker one
+and only the peak moves; the shape, which is the physics of the cell, stays
+put. Averaging the two chargers together into one curve would corrupt both.
 
-The workflow runs the tests, builds, checks that the tag actually reached the
-executable's version resource -- resource embedding fails silently, and a
-nameless binary is not worth shipping -- and publishes the exe with its
-SHA-256.
+The peak is tracked as an **80th percentile** rather than an average, because
+charge data is full of trickle and nearly-full periods — a mean over them read
+17 W against a real 27 W charger.
 
-## How it predicts
+Time-to-full is then walking that curve: step through the charge levels between
+here and there, look up the rate for each, and add up the minutes.
 
-**Power comes from the battery, not from guesswork.** The driver reports actual
-milliwatts through `IOCTL_BATTERY_QUERY_STATUS`, which is hardware-measured
-whole-system draw. CPU package watts (RAPL) would need a signed kernel driver on
-Windows and would be strictly worse — CPU load is used only as a context
-feature, via one `GetSystemTimes` call.
+Finally, **it marks its own work.** Every prediction is filed with its target;
+when the target arrives, the real elapsed time is recorded against it. The
+running median of actual-versus-predicted becomes a correction applied to
+future estimates, and how widely those grades scatter becomes the confidence
+you see on hover. That is why a fresh install says "Still learning" and an old
+one does not.
 
-**Two tracks, because the reported rate lies.** Measured on the development
-machine, the driver's reported rate overstated true energy flow by ~50% in the
-minutes after unplugging. So the responsive figure (30 s EWMA of reported rate)
-drives the display, while a least-squares slope of the capacity gauge over 15
-minutes — the energy that actually left the pack — drives the medium-horizon
-prediction.
+The Learning tab in Settings shows all of this as it accumulates.
 
-**Discharge blends three horizons.** Expected draw at horizon `h` hands off
-smoothly from what the machine is doing now, through the last hour, to how it
-normally behaves in this context (activity × CPU-load bucket). Because draw
-varies with `h`, time-to-empty is solved by forward integration, not division.
-The usable floor is learned from where this machine actually hits critical.
+For the full detail — the two-track rate estimation, the charge-limit
+detection, and measured accuracy against a naive baseline — see
+[docs/prediction.md](docs/prediction.md).
 
-**Charging integrates a learned curve.** Lithium cells charge constant-current
-then constant-voltage, so the rate collapses near full — on this hardware the
-taper starts around 60%, not the textbook 80%. The app learns a per-device
-rate-vs-SoC curve, stored as a normalised shape plus a separately tracked peak,
-so swapping to a weaker charger rescales the curve instead of corrupting it.
-The peak is tracked as an 80th percentile rather than a mean: charge data
-includes trickle and near-full periods, and a mean over them read 17 W against a
-real 27 W charger.
-
-**One milestone at a time while charging.** Below 80% the panel shows time to
-80%; past it, time to full. Never both — charging slows sharply at that point,
-so the two numbers describe different regimes and showing them together invites
-reading the wrong one.
-
-**Charge limits are detected, not guessed at.** If capacity sits still on AC
-below 95%, the app reports "held at N% — charge limit" rather than an ETA that
-will never arrive. Surface Battery Limit and Windows Smart Charging both do this.
-
-**It grades itself.** Every prediction is logged with its target; when the target
-is reached the actual elapsed time is recorded. A rolling median of
-actual/predicted becomes a correction factor, and its spread becomes the
-confidence shown on hover. Checkpoints are near-term (a 15% SoC move) so they
-actually resolve — time-to-empty would otherwise almost never be gradeable,
-since the machine dies before the outcome can be recorded.
-
-**It is accurate on day one.** On first run it parses
-`powercfg /batteryreport /xml` in the background: 14 days of real charge sessions
-and discharge segments bootstrap the curve and the priors. A wide charge session
-constrains the *integral*, not the shape — attributing its average rate to every
-SoC bucket it spans would flatten the very taper the curve exists to capture.
-
-## Measured accuracy
-
-Replay a recorded trace to measure end-to-end error against a naive
-`remaining ÷ current rate` predictor:
+## For developers
 
 ```sh
-cargo run --release -p battery-core --example replay -- trace.csv [--seed report.xml]
+cargo build --release      # target/release/battery-tray.exe
+cargo test --workspace
 ```
 
-On a 39-minute real charge session from this machine:
+A stable Rust toolchain is all you need. Three crates: `battery-core` is pure
+Rust and holds the estimator, the curve, persistence and the tests;
+`battery-win` wraps the battery IOCTLs; `battery-tray` is the Win32 layer —
+tray icon, panel, settings, message loop. No WMI, no COM, no runtime.
 
-| | model | naive baseline |
-|---|---|---|
-| median abs error | **13.2%** | 18.9% |
-| p90 abs error | 36.5% | — |
+- [docs/development.md](docs/development.md) — layout, debugging, the replay
+  harness, files on disk, cutting a release
+- [docs/prediction.md](docs/prediction.md) — how the estimates are actually made
+- [docs/drawing.md](docs/drawing.md) — how the panel and the graph are rendered
 
-Discharge is not yet validated on a long real session — the available trace held
-only 5 minutes off AC, which is too short for the 15-minute capacity slope to
-engage. The unit tests cover the discharge maths analytically; a real multi-hour
-recording would be the honest confirmation.
+## More screenshots
 
-## Drawing
+<details>
+<summary>Click to expand</summary>
 
-The logo, the tray glyphs and the embedded `.ico` all come from one place:
-`battery_core::glyph`, which rasterises shapes by supersampled coverage testing.
-The build script renders the icon from that same code, so the artwork cannot
-drift from what the app draws at runtime. Panel and settings windows composite
-into a single DIB in software — which is what gives the graph a properly
-anti-aliased, smoothed curve — with GDI used only for text.
+**Fully charged**
 
-The graph runs edge to edge and scrolls continuously: the x axis is a function
-of the current time, so a repaint twice a second is enough to make it drift
-without any animation state. It advances about a pixel every ten seconds. The
-oldest part fades out at the left edge rather than being clipped mid-stroke,
-and throughput is coloured by direction — into the battery green, out of it red,
-split at the zero line.
+<img src="docs/screenshots/charged.png" alt="Panel showing 98.57% and Fully charged" width="460">
 
-When every reading in the window flows the same way — nothing has been plugged
-in for an hour, say — the plot is handed entirely to that direction and the
-zero line is dropped, rather than holding half the height empty for a sign that
-never appears. Drain is negative, so on its own it would hang from the top
-edge; with no zero line left to give the sign meaning it is flipped instead,
-and reads the way any single-quantity chart does — more draw, taller. It goes
-back below the line the moment charge reappears. Both that and the zero line
-can be turned off, as can the graph itself.
+<img src="docs/screenshots/charged-level-graph.png" alt="Panel showing 98.66% with a longer stretch of history" width="460">
 
-The wash under the curve fades with distance from it. With a zero line to land
-on it stays tight and keeps a floor, so the area reads as filled all the way
-down; without one there is nothing to land on, so it reaches much further and
-dissolves rather than stopping at an edge. The left-hand fade is anchored to
-the start of the line rather than the edge of the plot — anchored to the plot,
-a short history would get no fade at all, because the ramp would be over before
-the data began.
+**Discharging, with time remaining in the tray icon**
 
-It draws only the span it actually has samples for. Holding the earliest reading
-across the rest of the window would render hours the app was not running as a
-flat line, which reads as real history rather than the absence of it. When there
-is not enough history to plot, the graph is dropped and the window shrinks
-instead of showing an empty band.
+<img src="docs/screenshots/tray-time-remaining.png" alt="Panel showing 7.8 W out and 3h 22m, with the time stacked in the tray icon" width="460">
 
-## Layout
+**The panel close up**
 
-```
-crates/battery-core   pure Rust: filters, curve, priors, estimator, scoring,
-                      persistence, report seeding, alerts, pacing, glyphs. No Win32, 108 tests.
-crates/battery-win    battery IOCTLs, CPU load
-crates/battery-tray   tray icon, popup panel, settings window, message loop
-```
+<img src="docs/screenshots/panel-close.png" alt="Close view of the panel showing 25.7 W out" width="403">
 
-## Cost
+<img src="docs/screenshots/panel-direction.png" alt="Close view of the panel with the graph turning red as draw begins" width="403">
 
-Measured while running: **~2.5 MB private working set**, ~0.05 s CPU per minute,
-a 531 KB executable, no runtime dependency. Sampling blocks in the kernel via
-`BATTERY_WAIT_STATUS` and wakes on real change or a 5-second timeout, with a
-fallback to timed polling if a driver ignores the wait. Tray icons are cached by
-appearance, so a sample that does not change the displayed value draws nothing.
+**Battery health**
 
-Sampling runs at 1 s while the panel is open and 5 s when it is not, since a
-fresher reading is only worth anything on screen.
+<img src="docs/screenshots/settings-battery.png" alt="The Battery tab, showing 39.4 Wh of 47.7 Wh design capacity, 83% health, 535 cycles" width="420">
 
-State lives in `%LOCALAPPDATA%\BatteryTray\`:
+**What it has learned**
 
-- `model.json` — learned curve, priors, corrections. Discarded if written by a
-  different version, since stale beliefs are invisible once stored as numbers.
-- `settings.json` — user preferences. Repaired field-by-field rather than
-  discarded, and tolerant of a byte-order mark, so hand editing is safe.
-- `history.bin` — 24 h of samples for the graph.
-- `panic.log` — written if the app ever dies unexpectedly. A windowed process
-  has no console, so without this a panic in a window procedure disappears and
-  Windows reports only a fault inside whichever system DLL made the call.
+<img src="docs/screenshots/settings-learning.png" alt="The Learning tab, showing a fully learned charge curve, 32.1 W charger and 33 graded predictions" width="420">
 
-"Reset learned data" clears the model and re-seeds; it leaves settings alone.
+</details>
 
 ## Licence
 
