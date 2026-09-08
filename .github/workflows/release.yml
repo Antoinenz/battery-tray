@@ -56,13 +56,42 @@ jobs:
           "$h  battery-tray.exe" | Out-File -Encoding ascii target/release/battery-tray.exe.sha256
           Get-Content target/release/battery-tray.exe.sha256
 
+      # Notes come from the tag's own section of CHANGELOG.md when it has one.
+      # A release describing what changed is worth writing by hand; the commit
+      # list GitHub generates is a poor substitute, so fall back to it only
+      # when the changelog has nothing to say about this tag.
+      - name: Release notes
+        id: notes
+        shell: pwsh
+        run: |
+          $tag = "${{ github.ref_name }}"
+          $lines = Get-Content CHANGELOG.md
+          $start = ($lines | Select-String -Pattern "^##\s+$([regex]::Escape($tag))\s*$").LineNumber
+          if (-not $start) {
+            "No CHANGELOG.md section for $tag; falling back to generated notes."
+            "file=" | Out-File -Append -Encoding utf8 $env:GITHUB_OUTPUT
+            exit 0
+          }
+          # From just after the heading to the line before the next one.
+          $rest = $lines[$start..($lines.Count - 1)]
+          $next = ($rest | Select-String -Pattern "^##\s").LineNumber | Select-Object -First 1
+          if ($next -gt 1) { $rest = $rest[0..($next - 2)] }
+          ($rest -join "`n").Trim() | Out-File -Encoding utf8 notes.md
+          Get-Content notes.md
+          "file=notes.md" | Out-File -Append -Encoding utf8 $env:GITHUB_OUTPUT
+
       - name: Publish
         shell: pwsh
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
+          $notes = if ("${{ steps.notes.outputs.file }}") {
+            @("--notes-file", "${{ steps.notes.outputs.file }}")
+          } else {
+            @("--generate-notes")
+          }
           gh release create "${{ github.ref_name }}" `
             target/release/battery-tray.exe `
             target/release/battery-tray.exe.sha256 `
             --title "BatteryTray ${{ github.ref_name }}" `
-            --generate-notes
+            @notes

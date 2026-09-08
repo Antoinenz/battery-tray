@@ -4,7 +4,7 @@ version = 4
 
 [[package]]
 name = "battery-core"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "serde",
  "serde_json",
@@ -12,7 +12,7 @@ dependencies = [
 
 [[package]]
 name = "battery-tray"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "battery-core",
  "battery-win",
@@ -22,7 +22,7 @@ dependencies = [
 
 [[package]]
 name = "battery-win"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "battery-core",
  "windows-sys 0.60.2",
