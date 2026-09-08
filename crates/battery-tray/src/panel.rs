@@ -13,13 +13,23 @@ use windows_sys::Win32::Foundation::*;
 use windows_sys::Win32::Graphics::Gdi::*;
 
 pub const PANEL_W: i32 = 322;
-/// Height of everything above the graph.
-const HEADER_H: i32 = 134;
 const GRAPH_H: i32 = 66;
+
+// The header's rows, top down. These are draw positions, not ink positions:
+// each font leaves some leading above its caps, so the gaps that show are
+// smaller than the differences here. Tightening one of them shortens the
+// window rather than pushing the slack further down.
+//
 /// Baseline of the throughput row. It sits closer under the percentage than
 /// the big font's own leading would put it: that leading is space above the
 /// caps, not a gap anyone asked for.
 const FLOW_Y: i32 = 53;
+/// The divider under the readings.
+const RULE_Y: i32 = 82;
+/// The time-remaining row beneath it.
+const TIME_Y: i32 = 92;
+/// Height of everything above the graph: the time row plus the space under it.
+const HEADER_H: i32 = TIME_Y + 32;
 /// With no graph to show, the window shrinks rather than leaving a void.
 pub const PANEL_H_COMPACT: i32 = HEADER_H + 4;
 pub const PANEL_H_FULL: i32 = HEADER_H + GRAPH_H;
@@ -196,9 +206,9 @@ pub fn chart_rect(width: i32, height: i32, scale: f64) -> RECT {
 pub fn time_row_rect(scale: f64) -> RECT {
     RECT {
         left: scaled(PAD, scale),
-        top: scaled(98, scale),
+        top: scaled(TIME_Y - 4, scale),
         right: scaled(PANEL_W - PAD, scale),
-        bottom: scaled(126, scale),
+        bottom: scaled(TIME_Y + 24, scale),
     }
 }
 
@@ -626,7 +636,7 @@ pub fn render(
                     settings.graph_autofit,
                 );
             }
-            cv.hline(s(PAD), right, s(92), p.rule, 1.0);
+            cv.hline(s(PAD), right, s(RULE_Y), p.rule, 1.0);
             // The border is drawn side by side so the bottom edge can leave a
             // gap where the tail joins, making the two windows read as one shape.
             let b = p.border;
@@ -660,7 +670,7 @@ pub fn render(
         // One time row: while charging this is deliberately either the 80%
         // milestone or the full one, never both. A full battery has already
         // said so above, so nothing is repeated here.
-        let row_y = s(102);
+        let row_y = s(TIME_Y);
         match est.active() {
             Some(pred) => {
                 text(mem, est.active_label(), s(PAD), row_y, fonts.body, p.dim, None);
