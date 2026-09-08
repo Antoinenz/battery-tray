@@ -16,6 +16,10 @@ pub const PANEL_W: i32 = 322;
 /// Height of everything above the graph.
 const HEADER_H: i32 = 134;
 const GRAPH_H: i32 = 66;
+/// Baseline of the throughput row. It sits closer under the percentage than
+/// the big font's own leading would put it: that leading is space above the
+/// caps, not a gap anyone asked for.
+const FLOW_Y: i32 = 53;
 /// With no graph to show, the window shrinks rather than leaving a void.
 pub const PANEL_H_COMPACT: i32 = HEADER_H + 4;
 pub const PANEL_H_FULL: i32 = HEADER_H + GRAPH_H;
@@ -535,9 +539,9 @@ pub(crate) unsafe fn text_width(hdc: HDC, s: &str, font: HFONT) -> i32 {
 fn flow_line(est: &Estimates) -> String {
     match est.phase {
         Phase::Full => "Fully charged".into(),
-        Phase::Plateau => format!("{:.1} W  held", est.watts.abs()),
-        Phase::Charging => format!("{:.1} W  in", est.watts.abs()),
-        Phase::Discharging => format!("{:.1} W  out", est.watts.abs()),
+        Phase::Plateau => format!("{:.1} W held", est.watts.abs()),
+        Phase::Charging => format!("{:.1} W in", est.watts.abs()),
+        Phase::Discharging => format!("{:.1} W out", est.watts.abs()),
         Phase::Unknown => "measuring...".into(),
     }
 }
@@ -638,7 +642,7 @@ pub fn render(
         }
 
         text(mem, &settings.format_soc(soc_display), s(PAD), s(10), fonts.big, p.text, None);
-        text(mem, &flow_line(est), s(PAD), s(58), fonts.body, flow, None);
+        text(mem, &flow_line(est), s(PAD), s(FLOW_Y), fonts.body, flow, None);
         text(
             mem,
             &format!(
@@ -647,7 +651,7 @@ pub fn render(
                 est.full_mwh as f64 / 1000.0
             ),
             0,
-            s(61),
+            s(FLOW_Y + 3),
             fonts.small,
             p.dim,
             Some(right),
